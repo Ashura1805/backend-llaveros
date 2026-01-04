@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authtoken.models import Token 
 from django.contrib.auth import authenticate, get_user_model 
+from django.db.models import Q # <--- NECESARIO PARA BUSCAR "O" (Email O Username)
 from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
 
 from .serializers import (
@@ -36,29 +37,35 @@ def login_with_google(request):
 @permission_classes([AllowAny]) 
 def android_login_view(request):
     """
-    LOGIN PARA ANDROID (Con mensajes detallados para el usuario)
+    LOGIN HÍBRIDO: Acepta Email O Username (Para que el Admin pueda entrar)
     """
     serializer = LoginSerializer(data=request.data)
     
     if serializer.is_valid():
-        email = serializer.validated_data.get('email')
+        # El campo viene etiquetado como 'email' desde la App, 
+        # pero aquí lo trataremos como "input de login" (puede ser user o email)
+        login_input = serializer.validated_data.get('email')
         password = serializer.validated_data.get('password')
         
-        # --- LÓGICA DE MENSAJES AMIGABLES ---
         User = get_user_model()
         
-        # 1. VERIFICAR SI EL USUARIO EXISTE
-        if not User.objects.filter(email=email).exists():
+        # 1. BÚSQUEDA INTELIGENTE
+        # Buscamos si existe alguien con ese Email O con ese Username
+        user_found = User.objects.filter(
+            Q(email=login_input) | Q(username=login_input)
+        ).first()
+        
+        if not user_found:
             return Response(
-                {"error": "El usuario no existe. Por favor, regístrese."}, 
+                {"error": "El usuario o correo no existe. Por favor, regístrese."}, 
                 status=status.HTTP_404_NOT_FOUND 
             )
 
-        # 2. SI EXISTE, INTENTAR AUTENTICAR (Verificar Contraseña)
-        user = authenticate(username=email, password=password)
+        # 2. INTENTAR AUTENTICAR
+        # Usamos el 'username' real del usuario encontrado para que la función authenticate no falle
+        user = authenticate(username=user_found.username, password=password)
 
         if user is not None:
-            # ÉXITO: Contraseña correcta
             token, created = Token.objects.get_or_create(user=user)
             
             return Response({
@@ -68,15 +75,10 @@ def android_login_view(request):
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                
-                # --- CAMBIO IMPORTANTE: Enviamos si es Admin ---
-                "is_staff": user.is_staff, 
-                # ---------------------------------------------
-                
+                "is_staff": user.is_staff, # Enviamos el poder de Admin
                 "token": token.key 
             }, status=status.HTTP_200_OK)
         else:
-            # FALLO: Contraseña mal
             return Response(
                 {"error": "Contraseña incorrecta. Inténtalo de nuevo."}, 
                 status=status.HTTP_401_UNAUTHORIZED
@@ -105,7 +107,7 @@ class RegisterViewSet(viewsets.ViewSet):
                 "message": "¡Cuenta creada exitosamente! Puedes iniciar sesión ahora.", 
                 "success": True, 
                 "user_id": user.id,
-                "is_staff": user.is_staff # También lo enviamos al registrarse (aunque suele ser False)
+                "is_staff": user.is_staff
             }, status=status.HTTP_201_CREATED)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
