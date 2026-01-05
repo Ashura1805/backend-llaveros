@@ -117,6 +117,7 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
+    # Corregido: Quitamos write_only=True porque PrimaryKeyRelatedField ya maneja la escritura
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
@@ -126,7 +127,8 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
-    detalles = DetallePedidoSerializer(many=True)
+    # Habilitamos escritura para 'detalles' y requerimos que no esté vacío
+    detalles = DetallePedidoSerializer(many=True, required=True, allow_empty=False)
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
