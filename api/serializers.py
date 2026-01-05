@@ -90,12 +90,14 @@ class CategoriaSerializer(serializers.ModelSerializer):
 
 # === PRODUCTOS Y RELACIONES ===
 class LlaveroSerializer(serializers.ModelSerializer):
-    # Lectura: Objeto completo
-    categoria_info = CategoriaSerializer(source='categoria', read_only=True)
-    # Escritura: Solo ID
+    # Lectura: Objeto completo (Para que el catálogo en Android funcione bien y muestre datos)
+    categoria = CategoriaSerializer(read_only=True)
+    
+    # Escritura: Solo ID (Para crear/editar productos)
     categoria_id = serializers.PrimaryKeyRelatedField(
         queryset=Categoria.objects.all(), source='categoria', write_only=True
     )
+    
     class Meta:
         model = Llavero
         fields = '__all__'
@@ -115,30 +117,25 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (CORREGIDO Y PROBADO) ===
+# === PEDIDOS (LÓGICA DE CHECKOUT) ===
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
-    # 1. Lectura: Nombre del producto
+    # Lectura: Nombre del producto
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
     
-    # 2. Escritura: ID del producto (El campo clave para que funcione el POST)
-    # Usamos PrimaryKeyRelatedField para que acepte el ID numérico
+    # Escritura: ID del producto
+    # Android debe enviar {"llavero": ID, "cantidad": N}
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
         model = DetallePedido
         fields = ['id', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
-        # Precio y subtotal se calculan solos en el backend al crear
         read_only_fields = ['precio_unitario', 'subtotal']
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
-    
-    # IMPORTANTE: Definimos 'detalles' explícitamente para permitir escritura anidada
     detalles = DetallePedidoSerializer(many=True)
-    
-    # Formato de fecha estándar ISO para evitar problemas en Android
-    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M", read_only=True)
 
     class Meta:
         model = Pedido
@@ -146,29 +143,21 @@ class PedidoSerializer(serializers.ModelSerializer):
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
     def create(self, validated_data):
-        # 1. Extraer los productos (detalles) de la petición
+        # 1. Extraer los productos
         detalles_data = validated_data.pop('detalles')
         
-        # 2. Obtener el usuario actual
+        # 2. Obtener el usuario
         user = self.context['request'].user
         
-        # Buscar o crear perfil Cliente
-        # Si el usuario es superuser y no tiene cliente, lo creamos para que no falle
-        try:
-            cliente = Cliente.objects.get(user=user)
-        except Cliente.DoesNotExist:
-             cliente = Cliente.objects.create(
-                 user=user, 
-                 email=user.email,
-                 username=user.username
-             )
+        # 3. Buscar o crear el cliente
+        cliente, _ = Cliente.objects.get_or_create(username=user.username, defaults={'email': user.email})
 
-        # 3. Crear cabecera del Pedido
+        # 4. Crear el pedido
         pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
         
         total_acumulado = 0
 
-        # 4. Crear detalles
+        # 5. Crear los detalles
         for detalle_data in detalles_data:
             llavero_obj = detalle_data['llavero']
             cantidad = detalle_data['cantidad']
@@ -184,7 +173,7 @@ class PedidoSerializer(serializers.ModelSerializer):
             )
             total_acumulado += subtotal
         
-        # 5. Guardar total final
+        # 6. Actualizar total
         pedido.total = total_acumulado
         pedido.save()
         
