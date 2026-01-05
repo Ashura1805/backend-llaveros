@@ -88,10 +88,11 @@ class CategoriaSerializer(serializers.ModelSerializer):
         model = Categoria
         fields = '__all__'
 
-# === PRODUCTOS Y RELACIONES (RESTAURADO) ===
-# Este vuelve a ser el código original que sí funcionaba con tu App.
+# === PRODUCTOS Y RELACIONES ===
 class LlaveroSerializer(serializers.ModelSerializer):
-    categoria = CategoriaSerializer(read_only=True)
+    # Lectura: Objeto completo
+    categoria_info = CategoriaSerializer(source='categoria', read_only=True)
+    # Escritura: Solo ID
     categoria_id = serializers.PrimaryKeyRelatedField(
         queryset=Categoria.objects.all(), source='categoria', write_only=True
     )
@@ -114,43 +115,53 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (NUEVO: Lógica de Creación) ===
+# === PEDIDOS (CORREGIDO Y PROBADO) ===
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
-    # Lectura: Nombre del producto (para mostrar en historial)
+    # 1. Lectura: Nombre del producto
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
     
-    # Escritura: Recibe el ID directamente en el campo 'llavero'
-    # Esto permite que Android envíe {"llavero": 1, ...} y funcione.
+    # 2. Escritura: ID del producto (El campo clave para que funcione el POST)
+    # Usamos PrimaryKeyRelatedField para que acepte el ID numérico
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
         model = DetallePedido
         fields = ['id', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
+        # Precio y subtotal se calculan solos en el backend al crear
         read_only_fields = ['precio_unitario', 'subtotal']
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
-    # IMPORTANTE: Quitamos read_only=True para permitir escribir detalles al crear
+    
+    # IMPORTANTE: Definimos 'detalles' explícitamente para permitir escritura anidada
     detalles = DetallePedidoSerializer(many=True)
     
-    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M", read_only=True)
+    # Formato de fecha estándar ISO para evitar problemas en Android
+    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
         model = Pedido
         fields = ['id', 'cliente', 'fecha_pedido', 'estado', 'total', 'detalles']
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
-    # Función mágica para guardar pedido + productos al mismo tiempo
     def create(self, validated_data):
-        # 1. Sacar los productos de la data
+        # 1. Extraer los productos (detalles) de la petición
         detalles_data = validated_data.pop('detalles')
         
-        # 2. Obtener usuario
+        # 2. Obtener el usuario actual
         user = self.context['request'].user
         
         # Buscar o crear perfil Cliente
-        cliente, _ = Cliente.objects.get_or_create(username=user.username, defaults={'email': user.email})
+        # Si el usuario es superuser y no tiene cliente, lo creamos para que no falle
+        try:
+            cliente = Cliente.objects.get(user=user)
+        except Cliente.DoesNotExist:
+             cliente = Cliente.objects.create(
+                 user=user, 
+                 email=user.email,
+                 username=user.username
+             )
 
         # 3. Crear cabecera del Pedido
         pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
@@ -159,21 +170,21 @@ class PedidoSerializer(serializers.ModelSerializer):
 
         # 4. Crear detalles
         for detalle_data in detalles_data:
-            llavero = detalle_data['llavero']
+            llavero_obj = detalle_data['llavero']
             cantidad = detalle_data['cantidad']
-            precio = llavero.precio
+            precio = llavero_obj.precio
             subtotal = precio * cantidad
             
             DetallePedido.objects.create(
                 pedido=pedido,
-                llavero=llavero,
+                llavero=llavero_obj,
                 cantidad=cantidad,
                 precio_unitario=precio,
                 subtotal=subtotal
             )
             total_acumulado += subtotal
         
-        # 5. Guardar total
+        # 5. Guardar total final
         pedido.total = total_acumulado
         pedido.save()
         
