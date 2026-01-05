@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authtoken.models import Token 
 from django.contrib.auth import authenticate, get_user_model 
-from django.db.models import Q # <--- NECESARIO PARA BUSCAR "O" (Email O Username)
+from django.db.models import Q # NECESARIO PARA BUSCAR "O" (Email O Username)
 from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
 
 from .serializers import (
@@ -141,22 +141,29 @@ class LlaveroMaterialViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
 
 class PedidoViewSet(viewsets.ModelViewSet):
+    """
+    CORRECCIÓN: Se cambia a IsAuthenticated. Un pedido DEBE pertenecer a alguien.
+    """
     queryset = Pedido.objects.all()
     serializer_class = PedidoSerializer
-    permission_classes = [AllowAny] 
+    permission_classes = [IsAuthenticated] 
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated and not user.is_anonymous:
+        if user.is_authenticated:
             if user.is_staff:
                 return Pedido.objects.all()
+            # Filtramos para que el cliente solo vea sus pedidos
             return Pedido.objects.filter(cliente__user=user)
-        return Pedido.objects.all() 
+        return Pedido.objects.none() # Si no está autenticado, no devuelve nada
 
 class DetallePedidoViewSet(viewsets.ModelViewSet):
+    """
+    CORRECCIÓN: Se cambia a IsAuthenticated para proteger los detalles de compra.
+    """
     queryset = DetallePedido.objects.all()
     serializer_class = DetallePedidoSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
 
 # === 3. VISTAS DE COMPATIBILIDAD (Para App Android) ===
