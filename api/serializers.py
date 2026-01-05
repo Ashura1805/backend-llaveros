@@ -4,6 +4,8 @@ from django.contrib.auth import authenticate, get_user_model
 from rest_framework import exceptions
 from django.db import transaction
 import decimal # Para manejar precios con seguridad
+import traceback # <--- AGREGADO PARA DEPURACIÓN PROFUNDA
+import sys
 
 User = get_user_model()
 
@@ -113,11 +115,10 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (BLINDADO CONTRA ERRORES 500) ===
+# === PEDIDOS (CON RASTREO DE ERRORES) ===
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
-    # Corregido: Quitamos write_only=True porque PrimaryKeyRelatedField ya maneja la escritura
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
@@ -127,7 +128,6 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
-    # Habilitamos escritura para 'detalles' y requerimos que no esté vacío
     detalles = DetallePedidoSerializer(many=True, required=True, allow_empty=False)
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
@@ -137,39 +137,39 @@ class PedidoSerializer(serializers.ModelSerializer):
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
     def create(self, validated_data):
-        print("--- INICIANDO CREACIÓN DE PEDIDO ---")
+        print("\n" + "="*40)
+        print("DEBUG: INICIANDO CREACIÓN DE PEDIDO")
+        print("="*40)
+        
         try:
             detalles_data = validated_data.pop('detalles')
-            
-            # 1. VERIFICACIÓN DE SEGURIDAD
             request = self.context.get('request')
+            
             if not request or not request.user or not request.user.is_authenticated:
-                print("Error: Usuario no autenticado intentando crear pedido")
+                print("DEBUG: Error de autenticación.")
                 raise serializers.ValidationError("Debes iniciar sesión para comprar.")
 
             user = request.user
             
-            # 2. OBTENCIÓN SEGURA DEL CLIENTE
-            # Intentamos obtener el cliente, si falla lo creamos
-            cliente = Cliente.objects.filter(user=user).first()
+            # Buscamos el cliente asociado al usuario logueado
+            # Nota: Asegúrate de que tu modelo Cliente tenga un campo 'user' o 'id' que coincida
+            cliente = Cliente.objects.filter(id=user.id).first()
             if not cliente:
-                print(f"Creando perfil de cliente para usuario: {user.username}")
-                cliente = Cliente.objects.create(user=user, email=user.email, username=user.username)
+                print(f"DEBUG: Cliente no encontrado para el usuario {user.username}. Usando instancia de User.")
+                cliente = user
 
             with transaction.atomic():
                 pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
-                
                 total_acumulado = 0.0
 
-                for detalle_data in detalles_data:
+                for i, detalle_data in enumerate(detalles_data):
                     llavero_obj = detalle_data['llavero']
                     cantidad = detalle_data['cantidad']
                     
-                    # 3. CÁLCULO MATEMÁTICO SEGURO
-                    # Convertimos a float/decimal para evitar errores si el precio viene como string
                     try:
                         precio = float(llavero_obj.precio)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, AttributeError) as e:
+                        print(f"DEBUG: Error obteniendo precio del llavero {llavero_obj.id}: {e}")
                         precio = 0.0
                         
                     subtotal = precio * cantidad
@@ -186,10 +186,20 @@ class PedidoSerializer(serializers.ModelSerializer):
                 pedido.total = total_acumulado
                 pedido.save()
                 
-            print(f"--- PEDIDO #{pedido.id} CREADO CON ÉXITO ---")
+            print(f"DEBUG: PEDIDO #{pedido.id} CREADO CON ÉXITO")
             return pedido
 
         except Exception as e:
-            print(f"--- ERROR CRÍTICO AL CREAR PEDIDO: {str(e)} ---")
-            # Re-lanzamos el error para que Django sepa que falló, pero ahora sabemos por qué
-            raise serializers.ValidationError(f"Error procesando el pedido: {str(e)}")
+            # === DEPURACIÓN CLAVE ===
+            print("\n" + "!"*60)
+            print("ERROR DETECTADO DURANTE LA COMPRA:")
+            # Imprime el Traceback completo en la consola del servidor
+            traceback.print_exc(file=sys.stdout)
+            print("!"*60 + "\n")
+            
+            # Devuelve el error técnico al Frontend para verlo en la respuesta JSON
+            raise serializers.ValidationError({
+                "error": "Error interno en el servidor",
+                "tipo_error": str(type(e).__name__),
+                "mensaje": str(e)
+            })

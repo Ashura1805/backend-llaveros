@@ -16,7 +16,8 @@ router.register(r'llavero-materiales', views.LlaveroMaterialViewSet)
 
 # 2. Usuarios y Ventas
 router.register(r'clientes', views.ClienteViewSet)
-router.register(r'pedidos', views.PedidoViewSet)
+# MODIFICACIÓN: Se añade basename='pedidos' porque el ViewSet usa get_queryset dinámico
+router.register(r'pedidos', views.PedidoViewSet, basename='pedidos')
 router.register(r'detalle-pedidos', views.DetallePedidoViewSet)
 router.register(r'register', views.RegisterViewSet, basename='register')
 
@@ -31,7 +32,6 @@ urlpatterns = [
     path('auth/google/', views.login_with_google, name='google-login'),
     
     # 3. Rutas específicas Android
-    # IMPORTANTE: Quitamos 'categories/' de aquí porque ya está en el router con poderes completos.
     # Solo dejamos la de productos filtrados porque esa sí necesita lógica especial.
     path('products/<int:category_id>/', views.ProductoList.as_view(), name='android-products'),
 
