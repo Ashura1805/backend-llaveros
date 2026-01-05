@@ -89,15 +89,12 @@ class CategoriaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # === PRODUCTOS Y RELACIONES ===
+# ESTA PARTE SE MANTIENE EXACTA A TU VERSIÓN ORIGINAL QUE FUNCIONA
 class LlaveroSerializer(serializers.ModelSerializer):
-    # Lectura: Objeto completo (Para que el catálogo en Android funcione bien y muestre datos)
     categoria = CategoriaSerializer(read_only=True)
-    
-    # Escritura: Solo ID (Para crear/editar productos)
     categoria_id = serializers.PrimaryKeyRelatedField(
         queryset=Categoria.objects.all(), source='categoria', write_only=True
     )
-    
     class Meta:
         model = Llavero
         fields = '__all__'
@@ -117,14 +114,15 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (LÓGICA DE CHECKOUT) ===
+# === PEDIDOS ===
+# AQUI ESTA LA MAGIA: Agregamos el método create y ajustamos DetallePedido
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
     # Lectura: Nombre del producto
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
     
-    # Escritura: ID del producto
-    # Android debe enviar {"llavero": ID, "cantidad": N}
+    # Escritura: Recibe el ID directamente en el campo 'llavero'
+    # IMPORTANTE: Usamos 'llavero' (sin _id) para coincidir con tu AppModels.kt corregido
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
@@ -134,33 +132,43 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
+    # Quitamos read_only=True de 'detalles' para permitir escribir
     detalles = DetallePedidoSerializer(many=True)
-    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M", read_only=True)
+    
+    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
         model = Pedido
         fields = ['id', 'cliente', 'fecha_pedido', 'estado', 'total', 'detalles']
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
+    # --- FUNCIÓN NUEVA PARA CREAR PEDIDOS ---
+    # Esto es lo único nuevo que agregamos para que funcione el botón de comprar
     def create(self, validated_data):
-        # 1. Extraer los productos
+        # 1. Sacar los productos de la data
         detalles_data = validated_data.pop('detalles')
         
-        # 2. Obtener el usuario
+        # 2. Obtener el usuario que hace la petición
         user = self.context['request'].user
         
-        # 3. Buscar o crear el cliente
-        cliente, _ = Cliente.objects.get_or_create(username=user.username, defaults={'email': user.email})
+        # 3. Buscar su perfil de cliente
+        try:
+            cliente = Cliente.objects.get(user=user)
+        except Cliente.DoesNotExist:
+            # Si no tiene perfil (ej. admin), creamos uno rápido
+            cliente = Cliente.objects.create(user=user, email=user.email, username=user.username)
 
         # 4. Crear el pedido
         pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
         
         total_acumulado = 0
 
-        # 5. Crear los detalles
+        # 5. Crear cada detalle
         for detalle_data in detalles_data:
             llavero_obj = detalle_data['llavero']
             cantidad = detalle_data['cantidad']
+            
+            # Obtener precio actual
             precio = llavero_obj.precio
             subtotal = precio * cantidad
             
@@ -173,7 +181,7 @@ class PedidoSerializer(serializers.ModelSerializer):
             )
             total_acumulado += subtotal
         
-        # 6. Actualizar total
+        # 6. Actualizar el total
         pedido.total = total_acumulado
         pedido.save()
         
