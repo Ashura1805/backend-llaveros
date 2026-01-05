@@ -86,18 +86,17 @@ class CategoriaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # === PRODUCTOS ===
+# Este lo dejamos IGUAL que en tu código original para no romper el catálogo
 class LlaveroSerializer(serializers.ModelSerializer):
     # Lectura: Objeto completo
     categoria_info = CategoriaSerializer(source='categoria', read_only=True)
-    # Escritura: Solo ID (Renombrado a 'categoria' para coincidir con el modelo)
-    categoria = serializers.PrimaryKeyRelatedField(queryset=Categoria.objects.all())
-
+    # Escritura: Solo ID
+    categoria_id = serializers.PrimaryKeyRelatedField(
+        queryset=Categoria.objects.all(), source='categoria', write_only=True
+    )
     class Meta:
         model = Llavero
-        fields = [
-            'id', 'nombre', 'descripcion', 'precio', 'stock_actual', 
-            'imagen_url', 'categoria', 'categoria_info', 'es_personalizable'
-        ]
+        fields = '__all__'
 
 class LlaveroMaterialSerializer(serializers.ModelSerializer):
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
@@ -110,74 +109,64 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (LÓGICA MEJORADA) ===
+# === PEDIDOS (MODIFICADO PARA QUE FUNCIONE EL CHECKOUT) ===
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
-    # Lectura: Nombre del producto
+    # 1. Para Leer (Historial): Enviamos el nombre del producto
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
     
-    # Escritura: ID del producto (Importante: nombre del campo 'llavero' coincide con modelo)
+    # 2. Para Escribir (Carrito): Recibimos el ID en el campo "llavero"
+    # IMPORTANTE: Esto coincide con el JSON {"llavero": 1, "cantidad": 2} que manda Android
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
         model = DetallePedido
         fields = ['id', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
-        read_only_fields = ['precio_unitario', 'subtotal'] # Se calculan solos
+        # Precio y subtotal se calculan solos en el backend
+        read_only_fields = ['precio_unitario', 'subtotal']
 
 class PedidoSerializer(serializers.ModelSerializer):
-    # Permitimos escribir la lista de detalles
+    cliente = serializers.StringRelatedField(read_only=True)
+    # "many=True" permite recibir una lista de productos
     detalles = DetallePedidoSerializer(many=True)
     
-    # Campos de solo lectura
-    cliente_nombre = serializers.ReadOnlyField(source='cliente.username')
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M", read_only=True)
 
     class Meta:
         model = Pedido
-        fields = ['id', 'cliente', 'cliente_nombre', 'fecha_pedido', 'estado', 'total', 'detalles']
+        fields = ['id', 'cliente', 'fecha_pedido', 'estado', 'total', 'detalles']
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
+    # Lógica mágica para guardar el pedido y sus productos
     def create(self, validated_data):
-        # 1. Extraer los productos (detalles) de la petición
+        # 1. Sacamos la lista de productos
         detalles_data = validated_data.pop('detalles')
         
-        # 2. Obtener el usuario actual
-        user = self.context['request'].user
+        # 2. Asignamos el cliente actual
+        cliente = self.context['request'].user
         
-        # Buscar el perfil de Cliente asociado al usuario
-        try:
-            cliente = Cliente.objects.get(pk=user.pk) # Usamos PK porque Cliente hereda de User
-        except Cliente.DoesNotExist:
-            # Si es un admin puro (superuser) y no tiene perfil cliente, podríamos fallar o crear uno.
-            # Asumimos que el usuario logueado es un Cliente válido.
-            # Fallback para admins:
-            cliente, _ = Cliente.objects.get_or_create(username=user.username, defaults={'email': user.email})
-
-        # 3. Crear el Pedido (total 0 inicial)
+        # 3. Creamos el pedido (cabecera)
         pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
         
         total_acumulado = 0
 
-        # 4. Crear cada detalle
-        for detalle_data in detalles_data:
-            llavero = detalle_data['llavero']
-            cantidad = detalle_data['cantidad']
-            
-            # Usar precio actual del producto
-            precio_unitario = llavero.precio
-            subtotal = precio_unitario * cantidad
+        # 4. Guardamos cada producto del carrito
+        for detalle in detalles_data:
+            llavero_obj = detalle['llavero']
+            cantidad = detalle['cantidad']
+            precio = llavero_obj.precio
+            subtotal = precio * cantidad
             
             DetallePedido.objects.create(
                 pedido=pedido,
-                llavero=llavero,
+                llavero=llavero_obj,
                 cantidad=cantidad,
-                precio_unitario=precio_unitario,
+                precio_unitario=precio,
                 subtotal=subtotal
             )
             total_acumulado += subtotal
-            
-
-        # 5. Actualizar total y guardar
+        
+        # 5. Actualizamos el total final
         pedido.total = total_acumulado
         pedido.save()
         
