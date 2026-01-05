@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, LlaveroMaterial
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import exceptions
-from django.db import transaction # Importante para guardar pedidos de forma segura
+from django.db import transaction
+import decimal # Para manejar precios con seguridad
 
 User = get_user_model()
 
@@ -88,7 +89,6 @@ class CategoriaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # === PRODUCTOS Y RELACIONES ===
-# (ESTO SE MANTIENE IGUAL PARA QUE NO FALLE EL CATÁLOGO)
 class LlaveroSerializer(serializers.ModelSerializer):
     categoria = CategoriaSerializer(read_only=True)
     categoria_id = serializers.PrimaryKeyRelatedField(
@@ -113,14 +113,10 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (AQUÍ ESTÁ LA SOLUCIÓN) ===
+# === PEDIDOS (BLINDADO CONTRA ERRORES 500) ===
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
-    # Lectura: Nombre del producto para mostrar en historial
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
-    
-    # Escritura: Recibe el ID directamente en el campo 'llavero'
-    # Coincide con el JSON de Android: {"llavero": 1, "cantidad": 2}
     llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
 
     class Meta:
@@ -130,10 +126,7 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
 
 class PedidoSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField(read_only=True)
-    # Habilitamos escritura para 'detalles'
     detalles = DetallePedidoSerializer(many=True)
-    
-    # Formato de fecha seguro
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
@@ -142,43 +135,59 @@ class PedidoSerializer(serializers.ModelSerializer):
         read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
 
     def create(self, validated_data):
-        # Extraer los detalles del pedido
-        detalles_data = validated_data.pop('detalles')
-        
-        # Obtener el usuario actual desde el request
-        user = self.context['request'].user
-        
-        # Buscar o crear el perfil de Cliente
-        # Usamos filter().first() para evitar errores si hay duplicados raros
-        cliente = Cliente.objects.filter(user=user).first()
-        if not cliente:
-            cliente = Cliente.objects.create(user=user, email=user.email, username=user.username)
-
-        # Usamos una transacción para que todo se guarde o nada (Seguridad de datos)
-        with transaction.atomic():
-            # 1. Crear el pedido con total 0
-            pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
+        print("--- INICIANDO CREACIÓN DE PEDIDO ---")
+        try:
+            detalles_data = validated_data.pop('detalles')
             
-            total_acumulado = 0
+            # 1. VERIFICACIÓN DE SEGURIDAD
+            request = self.context.get('request')
+            if not request or not request.user or not request.user.is_authenticated:
+                print("Error: Usuario no autenticado intentando crear pedido")
+                raise serializers.ValidationError("Debes iniciar sesión para comprar.")
 
-            # 2. Crear cada detalle
-            for detalle_data in detalles_data:
-                llavero_obj = detalle_data['llavero']
-                cantidad = detalle_data['cantidad']
-                precio = llavero_obj.precio
-                subtotal = precio * cantidad
+            user = request.user
+            
+            # 2. OBTENCIÓN SEGURA DEL CLIENTE
+            # Intentamos obtener el cliente, si falla lo creamos
+            cliente = Cliente.objects.filter(user=user).first()
+            if not cliente:
+                print(f"Creando perfil de cliente para usuario: {user.username}")
+                cliente = Cliente.objects.create(user=user, email=user.email, username=user.username)
+
+            with transaction.atomic():
+                pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
                 
-                DetallePedido.objects.create(
-                    pedido=pedido,
-                    llavero=llavero_obj,
-                    cantidad=cantidad,
-                    precio_unitario=precio,
-                    subtotal=subtotal
-                )
-                total_acumulado += subtotal
-            
-            # 3. Actualizar el total final del pedido
-            pedido.total = total_acumulado
-            pedido.save()
-        
-        return pedido
+                total_acumulado = 0.0
+
+                for detalle_data in detalles_data:
+                    llavero_obj = detalle_data['llavero']
+                    cantidad = detalle_data['cantidad']
+                    
+                    # 3. CÁLCULO MATEMÁTICO SEGURO
+                    # Convertimos a float/decimal para evitar errores si el precio viene como string
+                    try:
+                        precio = float(llavero_obj.precio)
+                    except (ValueError, TypeError):
+                        precio = 0.0
+                        
+                    subtotal = precio * cantidad
+                    
+                    DetallePedido.objects.create(
+                        pedido=pedido,
+                        llavero=llavero_obj,
+                        cantidad=cantidad,
+                        precio_unitario=precio,
+                        subtotal=subtotal
+                    )
+                    total_acumulado += subtotal
+                
+                pedido.total = total_acumulado
+                pedido.save()
+                
+            print(f"--- PEDIDO #{pedido.id} CREADO CON ÉXITO ---")
+            return pedido
+
+        except Exception as e:
+            print(f"--- ERROR CRÍTICO AL CREAR PEDIDO: {str(e)} ---")
+            # Re-lanzamos el error para que Django sepa que falló, pero ahora sabemos por qué
+            raise serializers.ValidationError(f"Error procesando el pedido: {str(e)}")
