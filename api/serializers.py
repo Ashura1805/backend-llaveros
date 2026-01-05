@@ -1,77 +1,40 @@
 from rest_framework import serializers
 from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, LlaveroMaterial
-# Importamos get_user_model para asegurar que trabajamos con el modelo Cliente
-from django.contrib.auth import authenticate, get_user_model 
-from rest_framework import exceptions 
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework import exceptions
 
-# Obtener el modelo de usuario activo del proyecto (que es Cliente)
-User = get_user_model() 
+User = get_user_model()
 
-# === LOGIN DE USUARIO (EL PUNTO CRÍTICO) ===
+# === LOGIN DE USUARIO ===
 class LoginSerializer(serializers.Serializer):
-    """
-    Serializador para validar el login de usuario (email/username y contraseña).
-    """
-    # CORRECCIÓN CLAVE: Cambiamos el nombre del campo esperado de 'username' a 'email'
-    # para que coincida con el JSON que envía la App Android.
     email = serializers.CharField(label="Email o Username") 
     password = serializers.CharField(write_only=True, label="Contraseña")
     user = serializers.HiddenField(default=None) 
 
     def validate(self, data):
-        # Renombrar 'email' a 'username' internamente para que la función authenticate funcione
-        username_or_email = data.get("email") # <-- Tomamos el valor de 'email'
+        username_or_email = data.get("email")
         password = data.get("password")
 
-        # --- DEBUG LOGIN START ---
-        print(f"\n--- DEBUG LOGIN START ---")
-        print(f"Intento de login con email (transformado a username): {username_or_email}")
-        
         if username_or_email and password:
-            
-            user = None
-            
-            # 1. Intentar autenticar por username.
-            # NOTA: En este punto, 'username_or_email' podría ser el email.
             user = authenticate(username=username_or_email, password=password)
             
-            print(f"Resultado autenticación por Username directo: {user}")
-            
-            # 2. Si falla y parece un email, intentar autenticar buscando el username real del cliente
             if user is None and ('@' in username_or_email):
                 try:
-                    # Buscamos el objeto Cliente (User) por email (insensible a mayúsculas/minúsculas)
                     cliente = User.objects.get(email__iexact=username_or_email)
-                    
-                    # 3. Intentar autenticar usando el username REAL del objeto Cliente encontrado
                     user = authenticate(username=cliente.username, password=password) 
-                    
-                    print(f"Cliente encontrado por email ({cliente.username}). Resultado autenticación por Email: {user}")
-
                 except User.DoesNotExist:
-                    print(f"Usuario NO encontrado con email: {username_or_email}")
                     user = None 
             
-            # Si la autenticación falló, levanta error
             if user is None:
-                print(f"--- DEBUG LOGIN FAILED: Credenciales incorrectas ---")
-                raise exceptions.AuthenticationFailed('Credenciales incorrectas. Verifique su email/username y contraseña.')
+                raise exceptions.AuthenticationFailed('Credenciales incorrectas.')
             
-            # Verificar si el usuario está activo
             if not user.is_active:
-                print(f"--- DEBUG LOGIN FAILED: Usuario inactivo ---")
                 raise exceptions.AuthenticationFailed('Usuario inactivo.')
             
-            # --- DEBUGGING STEP 3: Éxito ---
-            print(f"--- DEBUG LOGIN SUCCESSFUL for user ID: {user.id} ---")
-            
         else:
-            print(f"--- DEBUG LOGIN FAILED: Campos faltantes ---")
-            raise exceptions.ValidationError("Debe ingresar el email y la contraseña.") # Mensaje ajustado
+            raise exceptions.ValidationError("Debe ingresar el email y la contraseña.")
             
-        # Almacenamos el objeto de usuario en el diccionario
         data['user'] = user
-        print(f"--- DEBUG LOGIN END ---\n")
         return data
 
 # === REGISTRO DE USUARIO ===
@@ -90,12 +53,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'username': 'Este nombre de usuario ya está en uso.'})
         
         if User.objects.filter(email=email).exists():
-            raise serializers.ValidationError({'email': 'Este correo electrónico ya está registrado. Inicie sesión.'}) 
+            raise serializers.ValidationError({'email': 'Este correo electrónico ya está registrado.'}) 
 
         return data
 
     def create(self, validated_data):
-        print(f"--- DEBUG REGISTER: Creando usuario {validated_data.get('username')}...")
         user = Cliente.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -105,7 +67,6 @@ class RegisterSerializer(serializers.ModelSerializer):
             telefono=validated_data.get('telefono'),
             direccion=validated_data.get('direccion')
         )
-        print(f"--- DEBUG REGISTER: Usuario creado con ID {user.id} ---")
         return user
 
 # === MANTENIMIENTO BÁSICO ===
@@ -124,47 +85,100 @@ class CategoriaSerializer(serializers.ModelSerializer):
         model = Categoria
         fields = '__all__'
 
-# === PRODUCTOS Y RELACIONES ===
+# === PRODUCTOS ===
 class LlaveroSerializer(serializers.ModelSerializer):
-    categoria = CategoriaSerializer(read_only=True)
-    categoria_id = serializers.PrimaryKeyRelatedField(
-        queryset=Categoria.objects.all(), source='categoria', write_only=True
-    )
+    # Lectura: Objeto completo
+    categoria_info = CategoriaSerializer(source='categoria', read_only=True)
+    # Escritura: Solo ID (Renombrado a 'categoria' para coincidir con el modelo)
+    categoria = serializers.PrimaryKeyRelatedField(queryset=Categoria.objects.all())
+
     class Meta:
         model = Llavero
-        fields = '__all__'
+        fields = [
+            'id', 'nombre', 'descripcion', 'precio', 'stock_actual', 
+            'imagen_url', 'categoria', 'categoria_info', 'es_personalizable'
+        ]
 
-# ¡NUEVO! Para asignar materiales a llaveros
 class LlaveroMaterialSerializer(serializers.ModelSerializer):
-    # Campos de lectura (nombres)
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
     material_nombre = serializers.ReadOnlyField(source='material.nombre')
     
-    llavero_id = serializers.PrimaryKeyRelatedField(
-        queryset=Llavero.objects.all(), source='llavero', write_only=True
-    )
-    material_id = serializers.PrimaryKeyRelatedField(
-        queryset=Material.objects.all(), source='material', write_only=True
-    )
+    llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
+    material = serializers.PrimaryKeyRelatedField(queryset=Material.objects.all())
 
     class Meta:
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS ===
+# === PEDIDOS (LÓGICA MEJORADA) ===
+
 class DetallePedidoSerializer(serializers.ModelSerializer):
-    llavero = LlaveroSerializer(read_only=True)
-    llavero_id = serializers.PrimaryKeyRelatedField(
-        queryset=Llavero.objects.all(), source='llavero', write_only=True
-    )
+    # Lectura: Nombre del producto
+    llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
+    
+    # Escritura: ID del producto (Importante: nombre del campo 'llavero' coincide con modelo)
+    llavero = serializers.PrimaryKeyRelatedField(queryset=Llavero.objects.all())
+
     class Meta:
         model = DetallePedido
-        fields = '__all__'
+        fields = ['id', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
+        read_only_fields = ['precio_unitario', 'subtotal'] # Se calculan solos
 
 class PedidoSerializer(serializers.ModelSerializer):
-    cliente = serializers.StringRelatedField(read_only=True)
-    detalles = DetallePedidoSerializer(many=True, read_only=True)
+    # Permitimos escribir la lista de detalles
+    detalles = DetallePedidoSerializer(many=True)
+    
+    # Campos de solo lectura
+    cliente_nombre = serializers.ReadOnlyField(source='cliente.username')
+    fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M", read_only=True)
+
     class Meta:
         model = Pedido
-        fields = '__all__'
-        read_only_fields = ('cliente', 'total', 'fecha_pedido')
+        fields = ['id', 'cliente', 'cliente_nombre', 'fecha_pedido', 'estado', 'total', 'detalles']
+        read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
+
+    def create(self, validated_data):
+        # 1. Extraer los productos (detalles) de la petición
+        detalles_data = validated_data.pop('detalles')
+        
+        # 2. Obtener el usuario actual
+        user = self.context['request'].user
+        
+        # Buscar el perfil de Cliente asociado al usuario
+        try:
+            cliente = Cliente.objects.get(pk=user.pk) # Usamos PK porque Cliente hereda de User
+        except Cliente.DoesNotExist:
+            # Si es un admin puro (superuser) y no tiene perfil cliente, podríamos fallar o crear uno.
+            # Asumimos que el usuario logueado es un Cliente válido.
+            # Fallback para admins:
+            cliente, _ = Cliente.objects.get_or_create(username=user.username, defaults={'email': user.email})
+
+        # 3. Crear el Pedido (total 0 inicial)
+        pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
+        
+        total_acumulado = 0
+
+        # 4. Crear cada detalle
+        for detalle_data in detalles_data:
+            llavero = detalle_data['llavero']
+            cantidad = detalle_data['cantidad']
+            
+            # Usar precio actual del producto
+            precio_unitario = llavero.precio
+            subtotal = precio_unitario * cantidad
+            
+            DetallePedido.objects.create(
+                pedido=pedido,
+                llavero=llavero,
+                cantidad=cantidad,
+                precio_unitario=precio_unitario,
+                subtotal=subtotal
+            )
+            total_acumulado += subtotal
+            
+
+        # 5. Actualizar total y guardar
+        pedido.total = total_acumulado
+        pedido.save()
+        
+        return pedido
