@@ -2,9 +2,12 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 
 # Create your models here.
+
 class Categoria(models.Model):
     nombre = models.CharField(max_length=50)
     descripcion = models.TextField(blank=True)
+    # NUEVO CAMPO: Para guardar el link de la imagen de la categoría
+    imagen_url = models.URLField(max_length=500, blank=True, null=True)
 
     class Meta:
         db_table = 'categorias'
@@ -31,6 +34,8 @@ class Llavero(models.Model):
     precio = models.DecimalField(max_digits=10, decimal_places=2)
     stock_actual = models.IntegerField()
     es_personalizable = models.BooleanField(default=False)
+    # NUEVO CAMPO: Para guardar el link de la imagen del producto
+    imagen_url = models.URLField(max_length=500, blank=True, null=True)
 
     class Meta:
         db_table = 'llaveros'
@@ -52,17 +57,16 @@ class Cliente(AbstractUser):
     direccion = models.TextField(blank=True, null=True)
     fecha_registro = models.DateTimeField(auto_now_add=True)
 
-    # === SOLUCIÓN: AGREGA related_name ===
     groups = models.ManyToManyField(
         'auth.Group',
-        related_name='cliente_groups',  # ← CAMBIA EL NOMBRE
+        related_name='cliente_groups',
         blank=True,
         help_text='The groups this user belongs to.',
         verbose_name='groups',
     )
     user_permissions = models.ManyToManyField(
         'auth.Permission',
-        related_name='cliente_permissions',  # ← CAMBIA EL NOMBRE
+        related_name='cliente_permissions',
         blank=True,
         help_text='Specific permissions for this user.',
         verbose_name='user permissions',
@@ -84,7 +88,7 @@ class Pedido(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     fecha_pedido = models.DateTimeField(auto_now_add=True)
     estado = models.CharField(max_length=20, choices=ESTADOS, default='pendiente')
-    total = models.DecimalField(max_digits=10, decimal_places=2)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00) # Added default just in case
 
     class Meta:
         db_table = 'pedidos'
@@ -93,12 +97,17 @@ class Pedido(models.Model):
         return f"Pedido {self.id}"
 
 class DetallePedido(models.Model):
-    pedido = models.ForeignKey('Pedido', on_delete=models.CASCADE)
+    pedido = models.ForeignKey(Pedido, related_name='detalles', on_delete=models.CASCADE) # Added related_name for serializer
     llavero = models.ForeignKey(Llavero, on_delete=models.CASCADE)
     cantidad = models.IntegerField()
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     personalizacion = models.TextField(blank=True)
+    # Agregamos subtotal para facilitar cálculos, aunque se puede calcular
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     class Meta:
         db_table = 'detalle_pedidos'
-        unique_together = ('pedido', 'llavero')
+        # unique_together = ('pedido', 'llavero') # Opcional: Si quieres permitir el mismo llavero dos veces (ej. personalizaciones distintas), quita esto.
+
+    def __str__(self):
+        return f"{self.cantidad} x {self.llavero.nombre}"
