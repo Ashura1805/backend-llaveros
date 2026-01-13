@@ -3,17 +3,19 @@ from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import exceptions
 from django.db import transaction
-import decimal # Para manejar precios con seguridad
-import traceback # <--- AGREGADO PARA DEPURACIÓN PROFUNDA
+import decimal
+import traceback
 import sys
 
 User = get_user_model()
 
-# === LOGIN DE USUARIO ===
+# ==========================================
+# 1. LOGIN DE USUARIO (SIMPLIFICADO)
+# ==========================================
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField(label="Email o Username") 
     password = serializers.CharField(write_only=True, label="Contraseña")
-    user = serializers.HiddenField(default=None) 
+    # user = serializers.HiddenField(default=None) # Comentado para evitar conflictos internos
 
     def validate(self, data):
         username_or_email = data.get("email")
@@ -21,15 +23,21 @@ class LoginSerializer(serializers.Serializer):
 
         if username_or_email and password:
             user = None
+            
+            # 1. Intentar autenticar asumiendo que es un Username
             user = authenticate(username=username_or_email, password=password)
             
-            if user is None and ('@' in username_or_email):
+            # 2. Si falla, intentar buscar por Email
+            if user is None:
                 try:
-                    cliente = User.objects.get(email__iexact=username_or_email)
-                    user = authenticate(username=cliente.username, password=password) 
-                except User.DoesNotExist:
-                    user = None 
+                    # Buscamos en el modelo de Usuario genérico para ser más robustos
+                    user_obj = User.objects.filter(email__iexact=username_or_email).first()
+                    if user_obj:
+                        user = authenticate(username=user_obj.username, password=password) 
+                except Exception:
+                    pass # Si falla la búsqueda, user sigue siendo None
             
+            # 3. Validación final
             if user is None:
                 raise exceptions.AuthenticationFailed('Credenciales incorrectas.')
             
@@ -42,12 +50,14 @@ class LoginSerializer(serializers.Serializer):
         data['user'] = user
         return data
 
-# === REGISTRO DE USUARIO ===
+# ==========================================
+# 2. REGISTRO DE USUARIO
+# ==========================================
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
     
     class Meta:
-        model = Cliente 
+        model = Cliente # Usamos Cliente ya que hereda de AbstractUser
         fields = ('username', 'email', 'password', 'first_name', 'last_name', 'telefono', 'direccion')
 
     def validate(self, data):
@@ -63,6 +73,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        # Creamos el usuario usando el método helper del modelo
         user = Cliente.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -74,7 +85,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         return user
 
-# === MANTENIMIENTO BÁSICO ===
+# ==========================================
+# 3. MANTENIMIENTO BÁSICO
+# ==========================================
 class ClienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cliente
@@ -90,7 +103,9 @@ class CategoriaSerializer(serializers.ModelSerializer):
         model = Categoria
         fields = '__all__'
 
-# === PRODUCTOS Y RELACIONES ===
+# ==========================================
+# 4. PRODUCTOS Y RELACIONES
+# ==========================================
 class LlaveroSerializer(serializers.ModelSerializer):
     categoria = CategoriaSerializer(read_only=True)
     categoria_id = serializers.PrimaryKeyRelatedField(
@@ -115,7 +130,9 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         model = LlaveroMaterial
         fields = '__all__'
 
-# === PEDIDOS (CON RASTREO DE ERRORES) ===
+# ==========================================
+# 5. PEDIDOS (CORREGIDO)
+# ==========================================
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
     llavero_nombre = serializers.ReadOnlyField(source='llavero.nombre')
@@ -123,83 +140,27 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DetallePedido
-        fields = ['id', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
-        read_only_fields = ['precio_unitario', 'subtotal']
+        fields = ['id', 'pedido', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
+        # NOTA: Quitamos read_only de precio/subtotal para permitir que Android los envíe si es necesario,
+        # aunque el modelo también puede calcularlos.
 
 class PedidoSerializer(serializers.ModelSerializer):
-    cliente = serializers.StringRelatedField(read_only=True)
-    detalles = DetallePedidoSerializer(many=True, required=True, allow_empty=False)
+    # CORRECCIÓN CRUCIAL:
+    # 1. read_only=True en detalles: Permite crear la "cabecera" del pedido sin enviar productos inmediatamente.
+    #    Esto es necesario porque tu App Android envía primero el pedido y luego los detalles.
+    detalles = DetallePedidoSerializer(many=True, read_only=True)
+    
+    # 2. Cliente StringRelatedField es bueno para leer, pero para escribir necesitamos aceptar el ID.
+    #    Como DRF maneja esto automáticamente con ModelSerializer si el campo está en 'fields', 
+    #    lo dejamos simple o usamos PrimaryKeyRelatedField si da problemas.
+    #    Por ahora, usaremos el comportamiento por defecto para escritura y String para lectura si se requiere.
+    
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
         model = Pedido
         fields = ['id', 'cliente', 'fecha_pedido', 'estado', 'total', 'detalles']
-        read_only_fields = ['cliente', 'total', 'estado', 'fecha_pedido']
+        # NOTA: 'total' NO debe ser read_only si queremos que Android envíe el total calculado.
+        read_only_fields = ['fecha_pedido'] 
 
-    def create(self, validated_data):
-        print("\n" + "="*40)
-        print("DEBUG: INICIANDO CREACIÓN DE PEDIDO")
-        print("="*40)
-        
-        try:
-            detalles_data = validated_data.pop('detalles')
-            request = self.context.get('request')
-            
-            if not request or not request.user or not request.user.is_authenticated:
-                print("DEBUG: Error de autenticación.")
-                raise serializers.ValidationError("Debes iniciar sesión para comprar.")
-
-            user = request.user
-            
-            # Buscamos el cliente asociado al usuario logueado
-            # Nota: Asegúrate de que tu modelo Cliente tenga un campo 'user' o 'id' que coincida
-            cliente = Cliente.objects.filter(id=user.id).first()
-            if not cliente:
-                print(f"DEBUG: Cliente no encontrado para el usuario {user.username}. Usando instancia de User.")
-                cliente = user
-
-            with transaction.atomic():
-                pedido = Pedido.objects.create(cliente=cliente, total=0, **validated_data)
-                total_acumulado = 0.0
-
-                for i, detalle_data in enumerate(detalles_data):
-                    llavero_obj = detalle_data['llavero']
-                    cantidad = detalle_data['cantidad']
-                    
-                    try:
-                        precio = float(llavero_obj.precio)
-                    except (ValueError, TypeError, AttributeError) as e:
-                        print(f"DEBUG: Error obteniendo precio del llavero {llavero_obj.id}: {e}")
-                        precio = 0.0
-                        
-                    subtotal = precio * cantidad
-                    
-                    DetallePedido.objects.create(
-                        pedido=pedido,
-                        llavero=llavero_obj,
-                        cantidad=cantidad,
-                        precio_unitario=precio,
-                        subtotal=subtotal
-                    )
-                    total_acumulado += subtotal
-                
-                pedido.total = total_acumulado
-                pedido.save()
-                
-            print(f"DEBUG: PEDIDO #{pedido.id} CREADO CON ÉXITO")
-            return pedido
-
-        except Exception as e:
-            # === DEPURACIÓN CLAVE ===
-            print("\n" + "!"*60)
-            print("ERROR DETECTADO DURANTE LA COMPRA:")
-            # Imprime el Traceback completo en la consola del servidor
-            traceback.print_exc(file=sys.stdout)
-            print("!"*60 + "\n")
-            
-            # Devuelve el error técnico al Frontend para verlo en la respuesta JSON
-            raise serializers.ValidationError({
-                "error": "Error interno en el servidor",
-                "tipo_error": str(type(e).__name__),
-                "mensaje": str(e)
-            })
+   
