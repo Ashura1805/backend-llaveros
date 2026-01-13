@@ -4,26 +4,24 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from . import views
 
 # === ROUTER PRINCIPAL ===
-# El router habilita automáticamente GET, POST, PUT, DELETE
 router = DefaultRouter()
 
-# 1. Inventario (Nombres en inglés para coincidir con la App Android)
-# Al cambiar 'categorias' por 'categories', la App Android usará este ViewSet completo
-router.register(r'categories', views.CategoriaViewSet)       # /api/categories/ (GET, POST, DELETE)
-router.register(r'llaveros', views.LlaveroViewSet)           # /api/llaveros/   (GET, POST, DELETE)
-router.register(r'materials', views.MaterialViewSet)
+# 1. INVENTARIO
+# CORRECCIÓN IMPORTANTE: Cambiado a 'categorias' (español) para coincidir con la petición de la App/Web
+router.register(r'categorias', views.CategoriaViewSet)       # /api/categorias/
+router.register(r'llaveros', views.LlaveroViewSet)           # /api/llaveros/
+router.register(r'materials', views.MaterialViewSet)         # /api/materials/ (La app lo pide así en el log)
 router.register(r'llavero-materiales', views.LlaveroMaterialViewSet)
 
-# 2. Usuarios y Ventas
+# 2. USUARIOS Y VENTAS
 router.register(r'clientes', views.ClienteViewSet)
-# MODIFICACIÓN: Se añade basename='pedidos' porque el ViewSet usa get_queryset dinámico
 router.register(r'pedidos', views.PedidoViewSet, basename='pedidos')
 router.register(r'detalle-pedidos', views.DetallePedidoViewSet)
 router.register(r'register', views.RegisterViewSet, basename='register')
 
 # === URLS ===
 urlpatterns = [
-    # 1. Rutas del Router (Aquí entra /api/categories/ con permiso de escritura)
+    # 1. Rutas del Router
     path('', include(router.urls)),
     
     # 2. Autenticación
@@ -31,10 +29,9 @@ urlpatterns = [
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('auth/google/', views.login_with_google, name='google-login'),
     
-    # 3. Rutas específicas Android
-    # Solo dejamos la de productos filtrados porque esa sí necesita lógica especial.
+    # 3. Rutas específicas (Filtros manuales si los usas)
     path('products/<int:category_id>/', views.ProductoList.as_view(), name='android-products'),
 
-    # 4. Login Android
+    # 4. Login Android (Híbrido)
     path('android/login/', views.android_login_view, name='android-login'),
 ]

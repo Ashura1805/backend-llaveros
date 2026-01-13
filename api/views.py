@@ -1,11 +1,11 @@
 from rest_framework import viewsets, status, generics
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser 
+from rest_framework.permissions import AllowAny, IsAuthenticated 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authtoken.models import Token 
 from django.contrib.auth import authenticate, get_user_model 
 from django.db.models import Q 
-from django.db import transaction # IMPORTANTE PARA COMPRAS SEGURAS
+from django.db import transaction 
 from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
 
 from .serializers import (
@@ -25,7 +25,7 @@ from .serializers import (
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_with_google(request):
-    """ Login simulado con Google (Stub). """
+    """ Login simulado con Google. """
     return Response({
         'status': 'success',
         'role': 'user',
@@ -44,52 +44,50 @@ def android_login_view(request):
         user_found = User.objects.filter(Q(email=login_input) | Q(username=login_input)).first()
         
         if not user_found:
-            return Response(
-                {"error": "El usuario o correo no existe. Por favor, regístrese."}, 
-                status=status.HTTP_404_NOT_FOUND 
-            )
+            return Response({"error": "Usuario no encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
         user = authenticate(username=user_found.username, password=password)
         if user is not None:
             token, created = Token.objects.get_or_create(user=user)
+            # Buscamos si tiene un Cliente asociado para devolver su ID (útil para la app)
+            cliente_id = None
+            try:
+                cliente = Cliente.objects.get(user=user)
+                cliente_id = cliente.id
+            except Cliente.DoesNotExist:
+                pass
+
             return Response({
                 "message": "Login exitoso",
                 "user_id": user.id,
+                "cliente_id": cliente_id, # IMPORTANTE PARA LA APP
                 "username": user.username,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "is_staff": user.is_staff, 
                 "token": token.key 
             }, status=status.HTTP_200_OK)
         else:
-            return Response(
-                {"error": "Contraseña incorrecta. Inténtalo de nuevo."}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"error": "Contraseña incorrecta."}, status=status.HTTP_401_UNAUTHORIZED)
     
-    print(f"\n--- ERROR FORMATO LOGIN --- Errores: {serializer.errors}")
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class RegisterViewSet(viewsets.ViewSet):
-    """ Registro de usuarios con generación de Token. """
     permission_classes = [AllowAny]
     def create(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-            token, created = Token.objects.get_or_create(user=user) 
+            token, created = Token.objects.get_or_create(user=user)
+            # Creamos automáticamente el perfil de Cliente
+            Cliente.objects.create(user=user, nombre=user.username, email=user.email)
+            
             return Response({
                 "token": token.key, 
-                "message": "¡Cuenta creada exitosamente!", 
-                "success": True, 
-                "user_id": user.id,
-                "is_staff": user.is_staff
+                "message": "¡Cuenta creada!", 
+                "success": True
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# === 2. VIEWSETS COMPLETOS (CRUD) ===
+# === 2. VIEWSETS PRINCIPALES (CRUD) ===
 
 class CategoriaViewSet(viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
@@ -116,55 +114,53 @@ class LlaveroMaterialViewSet(viewsets.ModelViewSet):
     serializer_class = LlaveroMaterialSerializer
     permission_classes = [AllowAny]
 
+# === AQUÍ ESTÁ LA CORRECCIÓN CLAVE PARA TU APP ===
+
 class PedidoViewSet(viewsets.ModelViewSet):
     """
-    LOGICA ACTUALIZADA PARA EVITAR ERRORES DE COMPRA.
-    Se asegura de que el cliente exista y vincula el pedido al usuario autenticado.
+    Permite crear pedidos desde Android sin restricciones estrictas de usuario.
+    Permite filtrar historial por cliente: /api/pedidos/?cliente=1
     """
+    queryset = Pedido.objects.all().order_by('-fecha_pedido') # Ordenado por fecha descendente
     serializer_class = PedidoSerializer
-    permission_classes = [IsAuthenticated] 
+    permission_classes = [AllowAny] # ✅ Abierto para que Android no de error 401
 
     def get_queryset(self):
-        user = self.request.user
-        if user.is_staff:
-            return Pedido.objects.all().order_by('-fecha')
-        return Pedido.objects.filter(cliente__user=user).order_by('-fecha')
+        """ Filtra los pedidos si se pasa el parámetro ?cliente=ID """
+        queryset = super().get_queryset()
+        cliente_id = self.request.query_params.get('cliente')
+        if cliente_id:
+            return queryset.filter(cliente_id=cliente_id)
+        return queryset
 
     def create(self, request, *args, **kwargs):
+        # Usamos transaction.atomic para asegurar integridad
         try:
-            # 1. Vincular o crear perfil de Cliente para el usuario logueado
-            # Esto evita el error si el usuario existe en Auth pero no en la tabla Cliente
-            cliente, _ = Cliente.objects.get_or_create(
-                user=request.user,
-                defaults={'nombre': request.user.get_full_name() or request.user.username}
-            )
-
-            # 2. Inyectar el ID del cliente en los datos recibidos
-            data = request.data.copy()
-            data['cliente'] = cliente.id
-            
-            serializer = self.get_serializer(data=data)
-            if serializer.is_valid():
-                # 3. Guardar pedido y detalles en una sola transacción
-                with transaction.atomic():
-                    self.perform_create(serializer)
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
-            
-            # Si hay errores de validación (ej. falta el total), se imprimen en consola
-            print(f"ERROR VALIDACION PEDIDO: {serializer.errors}")
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+            with transaction.atomic():
+                return super().create(request, *args, **kwargs)
         except Exception as e:
-            print(f"ERROR CRITICO EN COMPRA: {str(e)}")
-            return Response({"error": "No se pudo procesar la compra en el servidor."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print(f"Error creando pedido: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class DetallePedidoViewSet(viewsets.ModelViewSet):
+    """
+    Maneja los items dentro del pedido.
+    Permite filtrar: /api/detalle-pedidos/?pedido=5
+    """
     queryset = DetallePedido.objects.all()
     serializer_class = DetallePedidoSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny] # ✅ Abierto para Android
+
+    def get_queryset(self):
+        """ Filtra detalles por ID de pedido """
+        queryset = super().get_queryset()
+        pedido_id = self.request.query_params.get('pedido')
+        if pedido_id:
+            return queryset.filter(pedido_id=pedido_id)
+        return queryset
 
 
-# === 3. VISTAS DE COMPATIBILIDAD (Para App Android) ===
+# === 3. VISTAS EXTRA (Listas simples) ===
 
 class CategoriaList(generics.ListAPIView):
     queryset = Categoria.objects.all()
