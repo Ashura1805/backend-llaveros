@@ -9,83 +9,86 @@ from django.db import transaction
 from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
 
 from .serializers import (
-    RegisterSerializer, 
-    LoginSerializer,
-    CategoriaSerializer, 
-    LlaveroSerializer, 
-    PedidoSerializer, 
-    ClienteSerializer, 
-    MaterialSerializer,
-    LlaveroMaterialSerializer,
-    DetallePedidoSerializer
+    RegisterSerializer, LoginSerializer, CategoriaSerializer, LlaveroSerializer, 
+    PedidoSerializer, ClienteSerializer, MaterialSerializer, 
+    LlaveroMaterialSerializer, DetallePedidoSerializer
 )
 
+# IMPORTANTE: Con tu configuración, esta variable 'User' AHORA ES 'Cliente'
 User = get_user_model()
 
 # ==========================================
-# 1. LOGIN BLINDADO (SOLUCIÓN ERROR 500)
+# LOGIN ADAPTADO A AUTH_USER_MODEL = 'api.Cliente'
 # ==========================================
 
 @api_view(['POST'])
 @permission_classes([AllowAny]) 
 def android_login_view(request):
-    print("--- INTENTO DE LOGIN DESDE ANDROID ---") # Log para depurar
-    
-    # 1. Validar datos de entrada manualmente para evitar errores de serializer
-    email_or_username = request.data.get('email')
+    print("\n" + "="*40)
+    print("👤 LOGIN (MODELO PERSONALIZADO: CLIENTE)")
+
+    # 1. Obtener datos (Email/Usuario y Contraseña)
+    # Tu App Android envía 'email' y 'password'
+    login_input = request.data.get('email')
+    if not login_input:
+        login_input = request.data.get('username')
+        
     password = request.data.get('password')
 
-    if not email_or_username or not password:
+    print(f"📩 Intentando entrar con: '{login_input}'")
+
+    if not login_input or not password:
         return Response({"error": "Faltan credenciales"}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        # 2. Buscar usuario (por email o username)
-        user_found = User.objects.filter(Q(email__iexact=email_or_username) | Q(username__iexact=email_or_username)).first()
+    login_input = str(login_input).strip()
 
-        if not user_found:
-            return Response({"error": "Usuario no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+    # 2. PRIMER PASO: BUSCAR EL USUARIO (CLIENTE) MANUALMENTE
+    # Como tu usuario es el Cliente, buscamos directo en el modelo User (que es Cliente)
+    # Buscamos por email O por username (para que funcione con AdminShura o el correo)
+    user_obj = User.objects.filter(Q(email__iexact=login_input) | Q(username__iexact=login_input) | Q(nombre__iexact=login_input)).first()
 
-        # 3. Verificar contraseña
-        user = authenticate(username=user_found.username, password=password)
+    if not user_obj:
+        print(f"❌ No se encontró ningún Cliente/Usuario con: {login_input}")
+        return Response({"error": "Usuario no encontrado en la tabla Clientes."}, status=status.HTTP_404_NOT_FOUND)
 
-        if user is not None:
-            token, _ = Token.objects.get_or_create(user=user)
-            
-            # --- AQUÍ ESTABA EL ERROR 500 ---
-            # Intentamos obtener el cliente. Si falla, LO CREAMOS.
-            try:
-                cliente = Cliente.objects.get(user=user)
-            except Cliente.DoesNotExist:
-                print(f"El usuario {user.username} no tenía perfil de Cliente. Creando uno...")
-                cliente = Cliente.objects.create(
-                    user=user,
-                    nombre=user.first_name or user.username,
-                    email=user.email
-                )
-            except Exception as e:
-                # Si hay duplicados u otro error raro, tomamos el primero que aparezca
-                cliente = Cliente.objects.filter(user=user).first()
-            
-            # Si después de todo sigue siendo None (muy raro), evitamos el crash
-            cliente_id = cliente.id if cliente else 0
+    print(f"✅ Usuario/Cliente encontrado: {user_obj.email} (ID: {user_obj.id})")
 
-            return Response({
-                "message": "Login exitoso",
-                "user_id": user.id,
-                "cliente_id": cliente_id, 
-                "username": user.username,
-                "email": user.email,
-                "is_staff": user.is_staff,
-                "token": token.key 
-            }, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "Contraseña incorrecta"}, status=status.HTTP_401_UNAUTHORIZED)
+    # 3. SEGUNDO PASO: VERIFICAR CONTRASEÑA
+    # Usamos authenticate. Como authenticate espera 'username', le pasamos 
+    # el username REAL que encontramos en la base de datos (user_obj.username)
+    # o el campo que tu modelo use como identificador.
+    
+    user = authenticate(username=user_obj.username, password=password)
+    
+    # Si authenticate falla con username, intentamos pasando el email (algunos backends lo requieren)
+    if user is None:
+        user = authenticate(email=user_obj.email, password=password)
 
-    except Exception as e:
-        # Si ocurre CUALQUIER error interno, lo imprimimos en consola y devolvemos JSON
-        # en lugar de HTML rojo.
-        print(f"ERROR CRÍTICO EN LOGIN: {e}")
-        return Response({"error": f"Error interno del servidor: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    if user is not None:
+        # Generar Token (El token se vincula a 'user', que en tu caso es 'Cliente')
+        token, _ = Token.objects.get_or_create(user=user)
+        
+        print("🚀 LOGIN EXITOSO.")
+        
+        # OJO: En tu caso, user_id y cliente_id SON LO MISMO
+        return Response({
+            "message": "Login exitoso",
+            "user_id": user.id,
+            "cliente_id": user.id,   # Mismo ID porque User ES Cliente
+            "username": user.username, # O user.nombre, según tu modelo
+            "email": user.email,
+            "is_staff": user.is_staff,
+            "token": token.key 
+        }, status=status.HTTP_200_OK)
+
+    else:
+        print("❌ Contraseña incorrecta para este Cliente.")
+        return Response({"error": "Contraseña incorrecta"}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+# ==========================================
+# RESTO DEL CÓDIGO (CRUD)
+# ==========================================
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -95,12 +98,14 @@ def login_with_google(request):
 class RegisterViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
     def create(self, request):
+        # Usamos el serializer de registro
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             try:
+                # Esto crea un 'Cliente' directamente porque ese es tu User model
                 user = serializer.save()
                 token, _ = Token.objects.get_or_create(user=user)
-                Cliente.objects.get_or_create(user=user, defaults={'nombre': user.username, 'email': user.email})
+                
                 return Response({
                     "token": token.key, 
                     "message": "¡Cuenta creada exitosamente!", 
@@ -109,11 +114,6 @@ class RegisterViewSet(viewsets.ViewSet):
             except Exception as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-# ==========================================
-# 2. API VIEWSETS (CRUD)
-# ==========================================
 
 class CategoriaViewSet(viewsets.ModelViewSet):
     queryset = Categoria.objects.all()
@@ -126,7 +126,8 @@ class LlaveroViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
 
 class ClienteViewSet(viewsets.ModelViewSet):
-    queryset = Cliente.objects.all()
+    # OJO: User es Cliente, así que esto lista los usuarios
+    queryset = User.objects.all() 
     serializer_class = ClienteSerializer
     permission_classes = [AllowAny]
 
@@ -144,14 +145,12 @@ class PedidoViewSet(viewsets.ModelViewSet):
     queryset = Pedido.objects.all().order_by('-fecha_pedido')
     serializer_class = PedidoSerializer
     permission_classes = [AllowAny] 
-
     def get_queryset(self):
         queryset = super().get_queryset()
         cliente_id = self.request.query_params.get('cliente')
         if cliente_id:
             return queryset.filter(cliente_id=cliente_id)
         return queryset
-
     def create(self, request, *args, **kwargs):
         try:
             with transaction.atomic():
@@ -163,18 +162,12 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
     queryset = DetallePedido.objects.all()
     serializer_class = DetallePedidoSerializer
     permission_classes = [AllowAny]
-
     def get_queryset(self):
         queryset = super().get_queryset()
         pedido_id = self.request.query_params.get('pedido')
         if pedido_id:
             return queryset.filter(pedido_id=pedido_id)
         return queryset
-
-
-# ==========================================
-# 3. LISTAS SIMPLES (AQUÍ ESTÁ LA CLASE QUE FALTABA)
-# ==========================================
 
 class CategoriaList(generics.ListAPIView):
     queryset = Categoria.objects.all()
@@ -184,7 +177,6 @@ class CategoriaList(generics.ListAPIView):
 class ProductoList(generics.ListAPIView):
     serializer_class = LlaveroSerializer 
     permission_classes = [AllowAny] 
-
     def get_queryset(self):
         queryset = Llavero.objects.all()
         category_id = self.kwargs.get('category_id')

@@ -17,12 +17,13 @@ urlpatterns = [
     # 1. Rutas del Router (CRUD automático)
     path('', include(router.urls)),
 
-    # 2. Rutas del Login (Específicas para Android)
-    # Importante: Estas deben coincidir con las funciones en views.py
-    path('android-login/', views.android_login_view, name='android_login'),
-    path('google-login/', views.login_with_google, name='google_login'),
+    # 2. Rutas del Login (IGUAL QUE EN ANDROID)
+    path('android/login/', views.android_login_view, name='android_login'),
+    
+    # Por eso aquí ponemos: 'auth/google/'
+    path('auth/google/', views.login_with_google, name='google_login'),
 
-    # 3. Listas Simples (Para cargar rápido en Android)
+    # 3. Listas Simples
     path('lista-categorias/', views.CategoriaList.as_view(), name='categoria-list'),
     path('products/<int:category_id>/', views.ProductoList.as_view(), name='producto-list'),
 ]
