@@ -41,10 +41,9 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        # IMPORTANTE: Agregamos tu clase de Firebase aquí para que Django la use
+
         'api.authentication.FirebaseAuthentication',
         
-        # Mantenemos las otras por si acaso (para el admin o sesiones normales)
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
@@ -89,10 +88,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "backend.wsgi.application"
 
-# ---------------------------------------------------------
-# BASE DE DATOS CENTRALIZADA (RAILWAY)
-# ---------------------------------------------------------
-# URL proporcionada por ti. Con esto tu PC se conecta directo a Railway.
 
 RAILWAY_DB_URL = "mysql://root:pMNjlBIWSLJLrNHvljdFpfqnCokDvvHl@nozomi.proxy.rlwy.net:31358/railway"
 
@@ -123,3 +118,11 @@ STATIC_URL = "static/"
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
