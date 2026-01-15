@@ -20,7 +20,7 @@ from .serializers import (
 User = get_user_model()
 
 # ==========================================
-# LOGIN MANUAL (SIN CAMBIOS, FUNCIONA BIEN)
+# LOGIN MANUAL
 # ==========================================
 @api_view(['POST'])
 @permission_classes([AllowAny]) 
@@ -83,7 +83,7 @@ def android_login_view(request):
 
 
 # ==========================================
-# PEDIDOS (AQUÍ ESTÁ LA CORRECCIÓN)
+# PEDIDOS (SIN PAGINACIÓN PARA ANDROID)
 # ==========================================
 
 class PedidoViewSet(viewsets.ModelViewSet):
@@ -91,8 +91,7 @@ class PedidoViewSet(viewsets.ModelViewSet):
     serializer_class = PedidoSerializer
     permission_classes = [AllowAny] 
 
-    # 🔥 CORRECCIÓN PARA ANDROID: Desactivar paginación 🔥
-    # Esto hace que envíe [lista] en vez de {results: [lista]}
+    # 🔥 CORRECCIÓN: Desactivar paginación para enviar Lista [] directa
     pagination_class = None 
 
     def get_queryset(self):
@@ -123,7 +122,7 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
     serializer_class = DetallePedidoSerializer
     permission_classes = [AllowAny]
     
-    # 🔥 AQUÍ TAMBIÉN 🔥
+    # 🔥 CORRECCIÓN: Desactivar paginación aquí también
     pagination_class = None 
 
     def get_queryset(self):
@@ -170,10 +169,17 @@ class LlaveroViewSet(viewsets.ModelViewSet):
     serializer_class = LlaveroSerializer
     permission_classes = [AllowAny]
 
+# ==========================================
+# CLIENTES (AQUÍ ESTÁ LA SOLUCIÓN DEL ERROR)
+# ==========================================
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all() 
     serializer_class = ClienteSerializer
     permission_classes = [AllowAny]
+    
+    # 🔥 IMPORTANTE: Desactivar paginación para el Dropdown de Android
+    # Esto soluciona el error donde la App esperaba una lista y recibía un objeto {results:...}
+    pagination_class = None 
 
 class MaterialViewSet(viewsets.ModelViewSet):
     queryset = Material.objects.all()
