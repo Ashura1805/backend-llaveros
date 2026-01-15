@@ -41,9 +41,10 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-
+        # Tu autenticación personalizada de Firebase
         'api.authentication.FirebaseAuthentication',
         
+        # Mantenemos las otras por si acaso
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
@@ -88,7 +89,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "backend.wsgi.application"
 
-
+# ---------------------------------------------------------
+# BASE DE DATOS
+# ---------------------------------------------------------
 RAILWAY_DB_URL = "mysql://root:pMNjlBIWSLJLrNHvljdFpfqnCokDvvHl@nozomi.proxy.rlwy.net:31358/railway"
 
 DATABASES = {
@@ -119,10 +122,19 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# ==========================================
+# 📧 CONFIGURACIÓN DE CORREO (GMAIL) - PUERTO 465 (SSL)
+# ==========================================
+# ESTA ES LA CORRECCIÓN PARA EVITAR EL TIMEOUT
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
+
+# Usamos SSL y Puerto 465 (Más rápido y seguro para Railway)
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+EMAIL_TIMEOUT = 30 # 30 segundos máximo de espera
