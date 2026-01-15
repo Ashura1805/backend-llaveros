@@ -130,7 +130,7 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 
 # Usamos SSL y Puerto 465 (Más rápido y seguro para Railway)
-EMAIL_PORT = 587
+EMAIL_PORT = 2525
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False
 
