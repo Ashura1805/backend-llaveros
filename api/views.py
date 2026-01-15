@@ -1,6 +1,7 @@
 import random # Nuevo import
 from django.core.mail import send_mail # Nuevo import para Gmail
 from django.conf import settings # Nuevo import para settings
+from django.http import HttpResponse    
 
 from rest_framework import viewsets, status, generics
 from rest_framework.response import Response
@@ -282,3 +283,15 @@ def confirmar_recuperacion(request):
     registro.delete()
     
     return Response({"message": "¡Contraseña actualizada! Ya puedes iniciar sesión."})
+def prueba_email(request):
+    try:
+        send_mail(
+            'Prueba Técnica Llaveros3D',
+            'Si lees esto, el correo funciona perfectamente.',
+            settings.EMAIL_HOST_USER,
+            [settings.EMAIL_HOST_USER], # Se envía a sí mismo
+            fail_silently=False,
+        )
+        return HttpResponse("<h1>✅ ÉXITO: Correo enviado correctamente.</h1>")
+    except Exception as e:
+        return HttpResponse(f"<h1>❌ ERROR:</h1> <p>{str(e)}</p>")

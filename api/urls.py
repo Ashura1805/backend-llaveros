@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .views import prueba_email
 from .views import (
     RegisterViewSet, 
     CategoriaViewSet, 
@@ -41,4 +42,5 @@ urlpatterns = [
     # 🔥 RUTAS DE RECUPERACIÓN DE CONTRASEÑA 🔥
     path('auth/reset-request/', solicitar_recuperacion, name='password_reset_request'),
     path('auth/reset-confirm/', confirmar_recuperacion, name='password_reset_confirm'),
+    path('test-email/', prueba_email),
 ]
