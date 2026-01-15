@@ -4,10 +4,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authtoken.models import Token 
 from django.contrib.auth import get_user_model 
-from django.contrib.auth.hashers import check_password # IMPORTANTE: Para verificar contraseña manual
+from django.contrib.auth.hashers import check_password 
 from django.db.models import Q 
 from django.db import transaction 
-import traceback # Para capturar el error exacto
+import traceback 
 
 from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
 
@@ -17,13 +17,11 @@ from .serializers import (
     LlaveroMaterialSerializer, DetallePedidoSerializer
 )
 
-# Con tu configuración, User es Cliente
 User = get_user_model()
 
 # ==========================================
-# LOGIN MANUAL (EVITA ERROR 500)
+# LOGIN MANUAL (SIN CAMBIOS, FUNCIONA BIEN)
 # ==========================================
-
 @api_view(['POST'])
 @permission_classes([AllowAny]) 
 def android_login_view(request):
@@ -31,7 +29,6 @@ def android_login_view(request):
     print("🚑 LOGIN DE EMERGENCIA (MANUAL)")
 
     try:
-        # 1. Obtener datos
         login_input = request.data.get('email') or request.data.get('username')
         password = request.data.get('password')
 
@@ -42,8 +39,7 @@ def android_login_view(request):
 
         login_input = str(login_input).strip()
 
-        # 2. BUSCAR EL USUARIO (CLIENTE) DIRECTAMENTE
-        # No usamos authenticate() porque está causando el Error 500
+        # Buscar usuario
         user_obj = User.objects.filter(Q(email__iexact=login_input) | Q(username__iexact=login_input)).first()
 
         if not user_obj:
@@ -52,23 +48,16 @@ def android_login_view(request):
 
         print(f"✅ Usuario encontrado: {user_obj.email} (ID: {user_obj.id})")
 
-        # 3. VERIFICACIÓN MANUAL DE CONTRASEÑA
-        # Aquí es donde fallaba authenticate(). Lo hacemos a mano.
+        # Verificar contraseña manual
         password_is_valid = False
-        
-        # Opción A: La contraseña está encriptada (Django standard)
         if user_obj.password.startswith('pbkdf2_') or user_obj.password.startswith('argon2'):
             password_is_valid = check_password(password, user_obj.password)
-        # Opción B: La contraseña es texto plano (Si la metiste manual en la BD)
         else:
             password_is_valid = (user_obj.password == password)
 
         if password_is_valid:
-            # Generar Token manual
             token, _ = Token.objects.get_or_create(user=user_obj)
-            
             print("🚀 LOGIN EXITOSO (MANUAL).")
-            
             return Response({
                 "message": "Login exitoso",
                 "user_id": user_obj.id,
@@ -78,18 +67,15 @@ def android_login_view(request):
                 "is_staff": getattr(user_obj, 'is_staff', False),
                 "token": token.key 
             }, status=status.HTTP_200_OK)
-
         else:
             print("❌ Contraseña incorrecta.")
             return Response({"error": "Contraseña incorrecta"}, status=status.HTTP_401_UNAUTHORIZED)
 
     except Exception as e:
-        # AQUÍ CAPTURAMOS EL ERROR 500 Y TE LO MOSTRAMOS EN EL CELULAR
         error_msg = str(e)
         trace_msg = traceback.format_exc()
         print(f"🔥 CRASH DEL SERVIDOR: {error_msg}")
         print(trace_msg)
-        
         return Response({
             "error": f"Error Interno del Servidor: {error_msg}",
             "detail": "Revisa la terminal para ver el traceback completo."
@@ -97,7 +83,59 @@ def android_login_view(request):
 
 
 # ==========================================
-# RESTO DEL CÓDIGO (CRUD)
+# PEDIDOS (AQUÍ ESTÁ LA CORRECCIÓN)
+# ==========================================
+
+class PedidoViewSet(viewsets.ModelViewSet):
+    queryset = Pedido.objects.all().order_by('-fecha_pedido')
+    serializer_class = PedidoSerializer
+    permission_classes = [AllowAny] 
+
+    # 🔥 CORRECCIÓN PARA ANDROID: Desactivar paginación 🔥
+    # Esto hace que envíe [lista] en vez de {results: [lista]}
+    pagination_class = None 
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        cliente_id = self.request.query_params.get('cliente')
+        
+        if cliente_id:
+            print(f"🔍 HISTORIAL: Android pide pedidos del Cliente ID: {cliente_id}")
+            filtered = queryset.filter(cliente_id=cliente_id)
+            print(f"   -> Encontrados: {filtered.count()}")
+            return filtered
+        else:
+            print("👀 HISTORIAL: Android pidió TODOS los pedidos.")
+            
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        try:
+            with transaction.atomic():
+                print("🛒 Creando NUEVO pedido...")
+                return super().create(request, *args, **kwargs)
+        except Exception as e:
+            print(f"❌ Error creando pedido: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class DetallePedidoViewSet(viewsets.ModelViewSet):
+    queryset = DetallePedido.objects.all()
+    serializer_class = DetallePedidoSerializer
+    permission_classes = [AllowAny]
+    
+    # 🔥 AQUÍ TAMBIÉN 🔥
+    pagination_class = None 
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        pedido_id = self.request.query_params.get('pedido')
+        if pedido_id:
+            return queryset.filter(pedido_id=pedido_id)
+        return queryset
+
+
+# ==========================================
+# RESTO DE VISTAS (CRUD)
 # ==========================================
 
 @api_view(['POST'])
@@ -146,34 +184,6 @@ class LlaveroMaterialViewSet(viewsets.ModelViewSet):
     queryset = LlaveroMaterial.objects.all()
     serializer_class = LlaveroMaterialSerializer
     permission_classes = [AllowAny]
-
-class PedidoViewSet(viewsets.ModelViewSet):
-    queryset = Pedido.objects.all().order_by('-fecha_pedido')
-    serializer_class = PedidoSerializer
-    permission_classes = [AllowAny] 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        cliente_id = self.request.query_params.get('cliente')
-        if cliente_id:
-            return queryset.filter(cliente_id=cliente_id)
-        return queryset
-    def create(self, request, *args, **kwargs):
-        try:
-            with transaction.atomic():
-                return super().create(request, *args, **kwargs)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-class DetallePedidoViewSet(viewsets.ModelViewSet):
-    queryset = DetallePedido.objects.all()
-    serializer_class = DetallePedidoSerializer
-    permission_classes = [AllowAny]
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        pedido_id = self.request.query_params.get('pedido')
-        if pedido_id:
-            return queryset.filter(pedido_id=pedido_id)
-        return queryset
 
 class CategoriaList(generics.ListAPIView):
     queryset = Categoria.objects.all()
