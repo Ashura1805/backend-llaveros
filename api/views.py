@@ -1,6 +1,6 @@
-import random # Nuevo import
-from django.core.mail import send_mail # Nuevo import para Gmail
-from django.conf import settings # Nuevo import para settings
+import random 
+from django.core.mail import send_mail 
+from django.conf import settings 
 from django.http import HttpResponse    
 
 from rest_framework import viewsets, status, generics
@@ -13,14 +13,15 @@ from django.contrib.auth.hashers import check_password
 from django.db.models import Q 
 from django.db import transaction 
 import traceback 
+from rest_framework.exceptions import ValidationError # 🔥 IMPORTANTE: Necesario para validar stock
 
-from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido, CodigoRecuperacion # Importamos el modelo nuevo
+from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido, CodigoRecuperacion 
 
 from .serializers import (
     RegisterSerializer, LoginSerializer, CategoriaSerializer, LlaveroSerializer, 
     PedidoSerializer, ClienteSerializer, MaterialSerializer, 
     LlaveroMaterialSerializer, DetallePedidoSerializer,
-    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer # Importamos los serializadores nuevos
+    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer
 )
 
 User = get_user_model()
@@ -137,6 +138,35 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
         if pedido_id:
             return queryset.filter(pedido_id=pedido_id)
         return queryset
+
+    # 🔥 NUEVA LÓGICA DE STOCK: Se ejecuta al guardar cada item del carrito
+    def perform_create(self, serializer):
+        llavero = serializer.validated_data['llavero']
+        cantidad = serializer.validated_data['cantidad']
+
+        # 1. Validar que haya suficiente stock
+        if llavero.stock_actual < cantidad:
+            raise ValidationError({
+                "error": f"No hay suficiente stock de '{llavero.nombre}'. Disponibles: {llavero.stock_actual}"
+            })
+
+        try:
+            with transaction.atomic():
+                # 2. Restar el stock
+                llavero.stock_actual -= cantidad
+                llavero.save()
+
+                # 3. Guardar el detalle del pedido
+                serializer.save()
+                
+                print(f"📉 Stock actualizado: {llavero.nombre} ahora tiene {llavero.stock_actual}")
+                
+        except Exception as e:
+            # Si ya es un ValidationError, lo lanzamos tal cual
+            if isinstance(e, ValidationError):
+                raise e
+            # Si es otro error, lo envolvemos
+            raise ValidationError({"error": f"Error actualizando stock: {str(e)}"})
 
 
 # ==========================================
@@ -281,6 +311,9 @@ def confirmar_recuperacion(request):
     
     # Borrar código usado
     registro.delete()
+    
+    return Response({"message": "¡Contraseña actualizada!"})
+    
     
     return Response({"message": "¡Contraseña actualizada! Ya puedes iniciar sesión."})
 def prueba_email(request):
