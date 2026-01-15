@@ -1,3 +1,7 @@
+import random # Nuevo import
+from django.core.mail import send_mail # Nuevo import para Gmail
+from django.conf import settings # Nuevo import para settings
+
 from rest_framework import viewsets, status, generics
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -9,12 +13,13 @@ from django.db.models import Q
 from django.db import transaction 
 import traceback 
 
-from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido
+from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido, CodigoRecuperacion # Importamos el modelo nuevo
 
 from .serializers import (
     RegisterSerializer, LoginSerializer, CategoriaSerializer, LlaveroSerializer, 
     PedidoSerializer, ClienteSerializer, MaterialSerializer, 
-    LlaveroMaterialSerializer, DetallePedidoSerializer
+    LlaveroMaterialSerializer, DetallePedidoSerializer,
+    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer # Importamos los serializadores nuevos
 )
 
 User = get_user_model()
@@ -169,16 +174,12 @@ class LlaveroViewSet(viewsets.ModelViewSet):
     serializer_class = LlaveroSerializer
     permission_classes = [AllowAny]
 
-# ==========================================
-# CLIENTES (AQUÍ ESTÁ LA SOLUCIÓN DEL ERROR)
-# ==========================================
 class ClienteViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all() 
     serializer_class = ClienteSerializer
     permission_classes = [AllowAny]
     
     # 🔥 IMPORTANTE: Desactivar paginación para el Dropdown de Android
-    # Esto soluciona el error donde la App esperaba una lista y recibía un objeto {results:...}
     pagination_class = None 
 
 class MaterialViewSet(viewsets.ModelViewSet):
@@ -205,3 +206,79 @@ class ProductoList(generics.ListAPIView):
         if category_id is not None:
             queryset = queryset.filter(categoria__id=category_id)
         return queryset
+
+# ==========================================
+# 🔐 RECUPERACIÓN DE CONTRASEÑA (NUEVO)
+# ==========================================
+
+# 1. SOLICITAR CÓDIGO (Envía correo real)
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def solicitar_recuperacion(request):
+    serializer = RequestPasswordResetSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    email = serializer.validated_data['email']
+    user = User.objects.filter(email=email).first()
+    
+    # Por seguridad, no revelamos si existe o no
+    if not user:
+        return Response({"message": "Si el correo existe, se ha enviado un código."})
+    
+    # Generar código de 6 dígitos
+    codigo_str = str(random.randint(100000, 999999))
+    
+    # Borrar códigos anteriores y guardar el nuevo
+    CodigoRecuperacion.objects.filter(user=user).delete()
+    CodigoRecuperacion.objects.create(user=user, codigo=codigo_str)
+    
+    # ENVIAR CORREO 📧
+    asunto = "Recuperación de Contraseña - Llaveros3D"
+    mensaje = f"""Hola {user.username},
+
+Recibimos una solicitud para restablecer tu contraseña.
+Tu código de verificación es:
+
+{codigo_str}
+
+Si no fuiste tú, ignora este mensaje.
+"""
+    
+    try:
+        send_mail(asunto, mensaje, settings.EMAIL_HOST_USER, [email], fail_silently=False)
+        return Response({"message": "Código enviado a tu correo."})
+    except Exception as e:
+        print(f"Error enviando correo: {e}")
+        return Response({"error": "Error interno enviando el correo"}, status=500)
+
+
+# 2. CONFIRMAR Y CAMBIAR PASSWORD
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def confirmar_recuperacion(request):
+    serializer = ResetPasswordConfirmSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    email = serializer.validated_data['email']
+    codigo = serializer.validated_data['codigo']
+    new_password = serializer.validated_data['new_password']
+    
+    user = User.objects.filter(email=email).first()
+    if not user:
+        return Response({"error": "Usuario no encontrado"}, status=404)
+        
+    # Verificar código
+    registro = CodigoRecuperacion.objects.filter(user=user, codigo=codigo).first()
+    if not registro:
+        return Response({"error": "Código inválido o incorrecto"}, status=400)
+        
+    # CAMBIAR LA CONTRASEÑA
+    user.set_password(new_password)
+    user.save()
+    
+    # Borrar código usado
+    registro.delete()
+    
+    return Response({"message": "¡Contraseña actualizada! Ya puedes iniciar sesión."})

@@ -120,3 +120,17 @@ class DetallePedido(models.Model):
     def __str__(self):
         prod_name = self.llavero.nombre if self.llavero else "Producto Eliminado"
         return f"{self.cantidad} x {prod_name}"
+
+# ==========================================
+# 🔥 NUEVO MODELO PARA RECUPERAR CONTRASEÑA 🔥
+# ==========================================
+class CodigoRecuperacion(models.Model):
+    user = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    codigo = models.CharField(max_length=6)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'codigos_recuperacion'
+
+    def __str__(self):
+        return f"{self.user.email} - {self.codigo}"

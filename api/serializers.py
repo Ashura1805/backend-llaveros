@@ -15,7 +15,6 @@ User = get_user_model()
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField(label="Email o Username") 
     password = serializers.CharField(write_only=True, label="Contraseña")
-    # user = serializers.HiddenField(default=None) # Comentado para evitar conflictos internos
 
     def validate(self, data):
         username_or_email = data.get("email")
@@ -30,12 +29,11 @@ class LoginSerializer(serializers.Serializer):
             # 2. Si falla, intentar buscar por Email
             if user is None:
                 try:
-                    # Buscamos en el modelo de Usuario genérico para ser más robustos
                     user_obj = User.objects.filter(email__iexact=username_or_email).first()
                     if user_obj:
                         user = authenticate(username=user_obj.username, password=password) 
                 except Exception:
-                    pass # Si falla la búsqueda, user sigue siendo None
+                    pass 
             
             # 3. Validación final
             if user is None:
@@ -57,7 +55,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
     
     class Meta:
-        model = Cliente # Usamos Cliente ya que hereda de AbstractUser
+        model = Cliente 
         fields = ('username', 'email', 'password', 'first_name', 'last_name', 'telefono', 'direccion')
 
     def validate(self, data):
@@ -73,7 +71,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        # Creamos el usuario usando el método helper del modelo
         user = Cliente.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
@@ -131,7 +128,7 @@ class LlaveroMaterialSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # ==========================================
-# 5. PEDIDOS (CORREGIDO)
+# 5. PEDIDOS
 # ==========================================
 
 class DetallePedidoSerializer(serializers.ModelSerializer):
@@ -141,26 +138,26 @@ class DetallePedidoSerializer(serializers.ModelSerializer):
     class Meta:
         model = DetallePedido
         fields = ['id', 'pedido', 'llavero', 'llavero_nombre', 'cantidad', 'precio_unitario', 'subtotal']
-        # NOTA: Quitamos read_only de precio/subtotal para permitir que Android los envíe si es necesario,
-        # aunque el modelo también puede calcularlos.
 
 class PedidoSerializer(serializers.ModelSerializer):
-    # CORRECCIÓN CRUCIAL:
-    # 1. read_only=True en detalles: Permite crear la "cabecera" del pedido sin enviar productos inmediatamente.
-    #    Esto es necesario porque tu App Android envía primero el pedido y luego los detalles.
     detalles = DetallePedidoSerializer(many=True, read_only=True)
-    
-    # 2. Cliente StringRelatedField es bueno para leer, pero para escribir necesitamos aceptar el ID.
-    #    Como DRF maneja esto automáticamente con ModelSerializer si el campo está en 'fields', 
-    #    lo dejamos simple o usamos PrimaryKeyRelatedField si da problemas.
-    #    Por ahora, usaremos el comportamiento por defecto para escritura y String para lectura si se requiere.
-    
     fecha_pedido = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
 
     class Meta:
         model = Pedido
         fields = ['id', 'cliente', 'fecha_pedido', 'estado', 'total', 'detalles']
-        # NOTA: 'total' NO debe ser read_only si queremos que Android envíe el total calculado.
         read_only_fields = ['fecha_pedido'] 
 
-   
+# ==========================================
+# 🔥 SERIALIZADORES PARA RECUPERAR CLAVE 🔥
+# ==========================================
+
+# Para el Paso 1: Pedir el código
+class RequestPasswordResetSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+# Para el Paso 2: Confirmar el código y cambiar clave
+class ResetPasswordConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    codigo = serializers.CharField(max_length=6)
+    new_password = serializers.CharField(min_length=6) 
