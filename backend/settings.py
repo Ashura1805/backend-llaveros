@@ -2,11 +2,16 @@ import os
 from pathlib import Path
 import dj_database_url 
 
+# 🔥 IMPORTACIONES DE FIREBASE
+import firebase_admin
+from firebase_admin import credentials
+
 try:
     import pymysql
     pymysql.install_as_MySQLdb()
 except ImportError:
     pass
+
 # ---------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -41,10 +46,10 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        # Tu autenticación personalizada de Firebase
-        'api.authentication.FirebaseAuthentication',
+        # Tu autenticación personalizada de Firebase (si la usas)
+        # 'api.authentication.FirebaseAuthentication', 
         
-        # Mantenemos las otras por si acaso
+        # Mantenemos las estándar
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
@@ -92,6 +97,7 @@ WSGI_APPLICATION = "backend.wsgi.application"
 # ---------------------------------------------------------
 # BASE DE DATOS
 # ---------------------------------------------------------
+# Nota: Trata de usar variables de entorno para la URL real en producción por seguridad
 RAILWAY_DB_URL = "mysql://root:pMNjlBIWSLJLrNHvljdFpfqnCokDvvHl@nozomi.proxy.rlwy.net:31358/railway"
 
 DATABASES = {
@@ -123,18 +129,38 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ==========================================
-# 📧 CONFIGURACIÓN DE CORREO (GMAIL) - PUERTO 465 (SSL)
+# 📧 CONFIGURACIÓN DE CORREO (GMAIL)
 # ==========================================
-# ESTA ES LA CORRECCIÓN PARA EVITAR EL TIMEOUT
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 
-# Usamos SSL y Puerto 465 (Más rápido y seguro para Railway)
-EMAIL_PORT = 2525
+# 🔥 CORRECCIÓN: Puerto 465 es el estándar para SSL
+EMAIL_PORT = 465 
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False
 
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-EMAIL_TIMEOUT = 20 # 30 segundos máximo de espera
+EMAIL_TIMEOUT = 30 
+
+# ==========================================
+# 🔥 INICIALIZACIÓN DE FIREBASE ADMIN SDK
+# ==========================================
+# Esto permite que Django envíe notificaciones Push a los celulares
+if not firebase_admin._apps:
+    try:
+        # Busca el archivo en la carpeta raíz del proyecto
+        cred_path = os.path.join(BASE_DIR, 'serviceAccountKey.json')
+        
+        if os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+            print("--- FIREBASE: Iniciado desde Archivo Local: " + cred_path + " ---")
+        else:
+            # Opción B: Si usas variables de entorno en Railway (Más seguro)
+            # Aquí podrías cargar el JSON desde una variable si lo configuras luego
+            print("--- FIREBASE: No se encontró serviceAccountKey.json ---")
+            
+    except Exception as e:
+        print(f"--- FIREBASE ERROR: {e} ---")

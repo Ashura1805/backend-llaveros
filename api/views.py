@@ -28,7 +28,9 @@ from .serializers import (
     RegisterSerializer, LoginSerializer, CategoriaSerializer, LlaveroSerializer, 
     PedidoSerializer, ClienteSerializer, MaterialSerializer, 
     LlaveroMaterialSerializer, DetallePedidoSerializer,
-    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer, CarritoSerializer
+    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer, CarritoSerializer,
+    # 🔥 IMPORTANTE: Agregamos el nuevo serializer del token
+    FCMTokenSerializer
 )
 
 User = get_user_model()
@@ -312,7 +314,6 @@ def confirmar_recuperacion(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def obtener_carrito(request, cliente_id):
-    # En tu modelo Carrito, la relación es con 'Cliente'
     cliente = get_object_or_404(Cliente, pk=cliente_id)
     carrito, created = Carrito.objects.get_or_create(cliente=cliente)
     serializer = CarritoSerializer(carrito)
@@ -366,3 +367,31 @@ def vaciar_carrito(request):
     carrito = get_object_or_404(Carrito, cliente=cliente)
     carrito.items.all().delete()
     return Response({"status": "Carrito vaciado"})
+
+
+# ==========================================
+# 🔥 NOTIFICACIONES (FCM) 🔥
+# ==========================================
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def actualizar_fcm_token(request):
+    """
+    Recibe el token FCM del celular y lo guarda en la base de datos
+    para poder enviarle notificaciones luego.
+    """
+    serializer = FCMTokenSerializer(data=request.data)
+    if serializer.is_valid():
+        cliente_id = serializer.validated_data['cliente_id']
+        token = serializer.validated_data['token']
+        
+        try:
+            cliente = Cliente.objects.get(pk=cliente_id)
+            cliente.fcm_token = token
+            cliente.save()
+            print(f"📲 Token FCM actualizado para usuario: {cliente.username}")
+            return Response({"status": "Token actualizado correctamente"})
+        except Cliente.DoesNotExist:
+            return Response({"error": "Cliente no encontrado"}, status=404)
+            
+    return Response(serializer.errors, status=400)

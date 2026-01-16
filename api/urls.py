@@ -23,11 +23,14 @@ from .views import (
     solicitar_recuperacion,
     confirmar_recuperacion,
     
-    # 🔥 CARRITO (NUEVAS IMPORTACIONES) 🔥
+    # Carrito
     obtener_carrito,
     agregar_item_carrito,
     eliminar_item_carrito,
-    vaciar_carrito
+    vaciar_carrito,
+
+    # 🔥 NOTIFICACIONES (ESTO FALTABA IMPORTAR)
+    actualizar_fcm_token
 )
 
 router = DefaultRouter()
@@ -52,14 +55,17 @@ urlpatterns = [
     path('categories/', CategoriaList.as_view(), name='category-list'),
     path('products/<str:category_id>/', ProductoList.as_view(), name='product-list-by-category'),
 
-    # 🔥 RUTAS DE RECUPERACIÓN DE CONTRASEÑA 🔥
+    # Recuperación de Contraseña
     path('auth/reset-request/', solicitar_recuperacion, name='password_reset_request'),
     path('auth/reset-confirm/', confirmar_recuperacion, name='password_reset_confirm'),
 
-    # 🔥 RUTAS DEL CARRITO DE COMPRAS 🔥
-    # Nota: Ya no usamos 'views.' porque importamos las funciones arriba
+    # Carrito de Compras
     path('carrito/<int:cliente_id>/', obtener_carrito, name='obtener_carrito'),
     path('carrito/add/', agregar_item_carrito, name='agregar_item_carrito'),
     path('carrito/remove/', eliminar_item_carrito, name='eliminar_item_carrito'),
     path('carrito/clear/', vaciar_carrito, name='vaciar_carrito'),
+
+    # 🔥 NUEVA RUTA: REGISTRAR TOKEN DEL CELULAR 🔥
+    path('fcm/update-token/', actualizar_fcm_token, name='update_fcm_token'),
+
 ]

@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, LlaveroMaterial, Carrito, ItemCarrito
+from .models import (
+    Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, 
+    LlaveroMaterial, Carrito, ItemCarrito
+)
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import exceptions
 from django.db import transaction
@@ -149,18 +152,21 @@ class PedidoSerializer(serializers.ModelSerializer):
         read_only_fields = ['fecha_pedido'] 
 
 # ==========================================
-# 🔥 SERIALIZADORES PARA RECUPERAR CLAVE 🔥
+# 🔐 RECUPERACIÓN CLAVE
 # ==========================================
 
-# Para el Paso 1: Pedir el código
 class RequestPasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-# Para el Paso 2: Confirmar el código y cambiar clave
 class ResetPasswordConfirmSerializer(serializers.Serializer):
     email = serializers.EmailField()
     codigo = serializers.CharField(max_length=6)
     new_password = serializers.CharField(min_length=6)
+
+# ==========================================
+# 🛒 CARRITO DE COMPRAS
+# ==========================================
+
 class LlaveroSimpleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Llavero
@@ -183,4 +189,11 @@ class CarritoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Carrito
-        fields = ['id', 'cliente', 'items', 'total'] 
+        fields = ['id', 'cliente', 'items', 'total']
+
+# ==========================================
+# 🔥 NOTIFICACIONES (FCM) 🔥
+# ==========================================
+class FCMTokenSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=255)
+    cliente_id = serializers.IntegerField()
