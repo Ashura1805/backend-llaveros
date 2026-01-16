@@ -134,3 +134,28 @@ class CodigoRecuperacion(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.codigo}"
+class Carrito(models.Model):
+    cliente = models.OneToOneField(Cliente, on_delete=models.CASCADE, related_name='carrito')
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Carrito de {self.cliente.nombre}"
+
+    @property
+    def total(self):
+        total = sum(item.subtotal for item in self.items.all())
+        return total
+
+class ItemCarrito(models.Model):
+    carrito = models.ForeignKey(Carrito, related_name='items', on_delete=models.CASCADE)
+    llavero = models.ForeignKey(Llavero, on_delete=models.CASCADE)
+    cantidad = models.PositiveIntegerField(default=1)
+
+    @property
+    def subtotal(self):
+        # Asumiendo que llavero.precio es un Decimal o Float
+        return self.llavero.precio * self.cantidad
+
+    def __str__(self):
+        return f"{self.cantidad} x {self.llavero.nombre}"

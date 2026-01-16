@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import prueba_email
 from .views import (
+    # ViewSets
     RegisterViewSet, 
     CategoriaViewSet, 
     LlaveroViewSet, 
@@ -10,13 +10,24 @@ from .views import (
     ClienteViewSet,
     MaterialViewSet,
     LlaveroMaterialViewSet,
+    
+    # Listas específicas
     CategoriaList,
     ProductoList,
+
+    # Autenticación
     android_login_view,
     login_with_google,
 
+    # Recuperación de contraseña
     solicitar_recuperacion,
-    confirmar_recuperacion
+    confirmar_recuperacion,
+    
+    # 🔥 CARRITO (NUEVAS IMPORTACIONES) 🔥
+    obtener_carrito,
+    agregar_item_carrito,
+    eliminar_item_carrito,
+    vaciar_carrito
 )
 
 router = DefaultRouter()
@@ -36,11 +47,19 @@ urlpatterns = [
     # Rutas personalizadas (Login, Listas específicas)
     path('android/login/', android_login_view, name='android_login'),
     path('auth/google/', login_with_google, name='google_login'),
+    
+    # Listas para la App
     path('categories/', CategoriaList.as_view(), name='category-list'),
     path('products/<str:category_id>/', ProductoList.as_view(), name='product-list-by-category'),
 
     # 🔥 RUTAS DE RECUPERACIÓN DE CONTRASEÑA 🔥
     path('auth/reset-request/', solicitar_recuperacion, name='password_reset_request'),
     path('auth/reset-confirm/', confirmar_recuperacion, name='password_reset_confirm'),
-    path('test-email/', prueba_email),
+
+    # 🔥 RUTAS DEL CARRITO DE COMPRAS 🔥
+    # Nota: Ya no usamos 'views.' porque importamos las funciones arriba
+    path('carrito/<int:cliente_id>/', obtener_carrito, name='obtener_carrito'),
+    path('carrito/add/', agregar_item_carrito, name='agregar_item_carrito'),
+    path('carrito/remove/', eliminar_item_carrito, name='eliminar_item_carrito'),
+    path('carrito/clear/', vaciar_carrito, name='vaciar_carrito'),
 ]

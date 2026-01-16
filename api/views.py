@@ -1,27 +1,34 @@
 import random 
+import traceback 
 from django.core.mail import send_mail 
 from django.conf import settings 
-from django.http import HttpResponse    
+from django.http import HttpResponse
+from django.contrib.auth import get_user_model 
+from django.contrib.auth.hashers import check_password 
+from django.db.models import Q 
+from django.db import transaction 
+from django.shortcuts import get_object_or_404
 
 from rest_framework import viewsets, status, generics
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.authtoken.models import Token 
-from django.contrib.auth import get_user_model 
-from django.contrib.auth.hashers import check_password 
-from django.db.models import Q 
-from django.db import transaction 
-import traceback 
-from rest_framework.exceptions import ValidationError # 🔥 IMPORTANTE: Necesario para validar stock
+from rest_framework.exceptions import ValidationError 
 
-from .models import Categoria, Llavero, Pedido, Cliente, Material, LlaveroMaterial, DetallePedido, CodigoRecuperacion 
+# Importaciones de tus modelos
+from .models import (
+    Categoria, Llavero, Pedido, Cliente, Material, 
+    LlaveroMaterial, DetallePedido, CodigoRecuperacion, 
+    Carrito, ItemCarrito
+)
 
+# Importaciones de tus serializers
 from .serializers import (
     RegisterSerializer, LoginSerializer, CategoriaSerializer, LlaveroSerializer, 
     PedidoSerializer, ClienteSerializer, MaterialSerializer, 
     LlaveroMaterialSerializer, DetallePedidoSerializer,
-    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer
+    RequestPasswordResetSerializer, ResetPasswordConfirmSerializer, CarritoSerializer
 )
 
 User = get_user_model()
@@ -94,11 +101,10 @@ def android_login_view(request):
 # ==========================================
 
 class PedidoViewSet(viewsets.ModelViewSet):
+    # 🔥 CORRECCIÓN AQUÍ: Cambiado 'fecha' por 'fecha_pedido'
     queryset = Pedido.objects.all().order_by('-fecha_pedido')
     serializer_class = PedidoSerializer
     permission_classes = [AllowAny] 
-
-    # 🔥 CORRECCIÓN: Desactivar paginación para enviar Lista [] directa
     pagination_class = None 
 
     def get_queryset(self):
@@ -128,8 +134,6 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
     queryset = DetallePedido.objects.all()
     serializer_class = DetallePedidoSerializer
     permission_classes = [AllowAny]
-    
-    # 🔥 CORRECCIÓN: Desactivar paginación aquí también
     pagination_class = None 
 
     def get_queryset(self):
@@ -139,7 +143,6 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
             return queryset.filter(pedido_id=pedido_id)
         return queryset
 
-    # 🔥 NUEVA LÓGICA DE STOCK: Se ejecuta al guardar cada item del carrito
     def perform_create(self, serializer):
         llavero = serializer.validated_data['llavero']
         cantidad = serializer.validated_data['cantidad']
@@ -162,10 +165,8 @@ class DetallePedidoViewSet(viewsets.ModelViewSet):
                 print(f"📉 Stock actualizado: {llavero.nombre} ahora tiene {llavero.stock_actual}")
                 
         except Exception as e:
-            # Si ya es un ValidationError, lo lanzamos tal cual
             if isinstance(e, ValidationError):
                 raise e
-            # Si es otro error, lo envolvemos
             raise ValidationError({"error": f"Error actualizando stock: {str(e)}"})
 
 
@@ -209,8 +210,6 @@ class ClienteViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all() 
     serializer_class = ClienteSerializer
     permission_classes = [AllowAny]
-    
-    # 🔥 IMPORTANTE: Desactivar paginación para el Dropdown de Android
     pagination_class = None 
 
 class MaterialViewSet(viewsets.ModelViewSet):
@@ -239,10 +238,9 @@ class ProductoList(generics.ListAPIView):
         return queryset
 
 # ==========================================
-# 🔐 RECUPERACIÓN DE CONTRASEÑA (NUEVO)
+# 🔐 RECUPERACIÓN DE CONTRASEÑA
 # ==========================================
 
-# 1. SOLICITAR CÓDIGO (Envía correo real)
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def solicitar_recuperacion(request):
@@ -253,18 +251,14 @@ def solicitar_recuperacion(request):
     email = serializer.validated_data['email']
     user = User.objects.filter(email=email).first()
     
-    # Por seguridad, no revelamos si existe o no
     if not user:
         return Response({"message": "Si el correo existe, se ha enviado un código."})
     
-    # Generar código de 6 dígitos
     codigo_str = str(random.randint(100000, 999999))
     
-    # Borrar códigos anteriores y guardar el nuevo
     CodigoRecuperacion.objects.filter(user=user).delete()
     CodigoRecuperacion.objects.create(user=user, codigo=codigo_str)
     
-    # ENVIAR CORREO 📧
     asunto = "Recuperación de Contraseña - Llaveros3D"
     mensaje = f"""Hola {user.username},
 
@@ -284,7 +278,6 @@ Si no fuiste tú, ignora este mensaje.
         return Response({"error": "Error interno enviando el correo"}, status=500)
 
 
-# 2. CONFIRMAR Y CAMBIAR PASSWORD
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def confirmar_recuperacion(request):
@@ -300,31 +293,76 @@ def confirmar_recuperacion(request):
     if not user:
         return Response({"error": "Usuario no encontrado"}, status=404)
         
-    # Verificar código
     registro = CodigoRecuperacion.objects.filter(user=user, codigo=codigo).first()
     if not registro:
         return Response({"error": "Código inválido o incorrecto"}, status=400)
         
-    # CAMBIAR LA CONTRASEÑA
     user.set_password(new_password)
     user.save()
     
-    # Borrar código usado
     registro.delete()
     
-    return Response({"message": "¡Contraseña actualizada!"})
+    return Response({"message": "¡Contraseña actualizada! Ya puedes iniciar sesión."}, status=status.HTTP_200_OK)
+
+
+# ==========================================
+# 🛒 CARRITO DE COMPRAS (NUEVO)
+# ==========================================
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def obtener_carrito(request, cliente_id):
+    # En tu modelo Carrito, la relación es con 'Cliente'
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    carrito, created = Carrito.objects.get_or_create(cliente=cliente)
+    serializer = CarritoSerializer(carrito)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def agregar_item_carrito(request):
+    cliente_id = request.data.get('cliente_id')
+    llavero_id = request.data.get('llavero_id')
+    cantidad = int(request.data.get('cantidad', 1))
+
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    carrito, _ = Carrito.objects.get_or_create(cliente=cliente)
+    llavero = get_object_or_404(Llavero, pk=llavero_id)
+
+    item, created = ItemCarrito.objects.get_or_create(carrito=carrito, llavero=llavero)
     
+    if not created:
+        item.cantidad += cantidad
+    else:
+        item.cantidad = cantidad
     
-    return Response({"message": "¡Contraseña actualizada! Ya puedes iniciar sesión."})
-def prueba_email(request):
-    try:
-        send_mail(
-            'Prueba Técnica Llaveros3D',
-            'Si lees esto, el correo funciona perfectamente.',
-            settings.EMAIL_HOST_USER,
-            [settings.EMAIL_HOST_USER], # Se envía a sí mismo
-            fail_silently=False,
-        )
-        return HttpResponse("<h1>✅ ÉXITO: Correo enviado correctamente.</h1>")
-    except Exception as e:
-        return HttpResponse(f"<h1>❌ ERROR:</h1> <p>{str(e)}</p>")
+    if item.cantidad > llavero.stock_actual:
+        return Response({"error": "No hay suficiente stock"}, status=400)
+
+    item.save()
+    
+    serializer = CarritoSerializer(carrito)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def eliminar_item_carrito(request):
+    cliente_id = request.data.get('cliente_id')
+    llavero_id = request.data.get('llavero_id')
+
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    carrito = get_object_or_404(Carrito, cliente=cliente)
+    
+    ItemCarrito.objects.filter(carrito=carrito, llavero_id=llavero_id).delete()
+
+    serializer = CarritoSerializer(carrito)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def vaciar_carrito(request):
+    cliente_id = request.data.get('cliente_id')
+    cliente = get_object_or_404(Cliente, pk=cliente_id)
+    carrito = get_object_or_404(Carrito, cliente=cliente)
+    carrito.items.all().delete()
+    return Response({"status": "Carrito vaciado"})

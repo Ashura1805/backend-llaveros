@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, LlaveroMaterial
+from .models import Cliente, Categoria, Material, Llavero, Pedido, DetallePedido, LlaveroMaterial, Carrito, ItemCarrito
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import exceptions
 from django.db import transaction
@@ -160,4 +160,27 @@ class RequestPasswordResetSerializer(serializers.Serializer):
 class ResetPasswordConfirmSerializer(serializers.Serializer):
     email = serializers.EmailField()
     codigo = serializers.CharField(max_length=6)
-    new_password = serializers.CharField(min_length=6) 
+    new_password = serializers.CharField(min_length=6)
+class LlaveroSimpleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Llavero
+        fields = ['id', 'nombre', 'precio', 'imagen_url', 'stock_actual']
+
+class ItemCarritoSerializer(serializers.ModelSerializer):
+    llavero = LlaveroSimpleSerializer(read_only=True)
+    llavero_id = serializers.PrimaryKeyRelatedField(
+        queryset=Llavero.objects.all(), source='llavero', write_only=True
+    )
+    subtotal = serializers.ReadOnlyField()
+
+    class Meta:
+        model = ItemCarrito
+        fields = ['id', 'llavero', 'llavero_id', 'cantidad', 'subtotal']
+
+class CarritoSerializer(serializers.ModelSerializer):
+    items = ItemCarritoSerializer(many=True, read_only=True)
+    total = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Carrito
+        fields = ['id', 'cliente', 'items', 'total'] 
